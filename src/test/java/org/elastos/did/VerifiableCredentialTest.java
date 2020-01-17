@@ -22,16 +22,16 @@
 
 package org.elastos.did;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.Arrays;
 
 import org.elastos.did.exception.DIDException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class VerifiableCredentialTest {
 	@Test
@@ -39,7 +39,7 @@ public class VerifiableCredentialTest {
 		TestData testData = new TestData();
 
 		// for integrity check
-		testData.setupStore(true);
+		testData.setup(true);
 		DIDDocument issuer = testData.loadTestIssuer();
 		DIDDocument test = testData.loadTestDocument();
 
@@ -69,7 +69,7 @@ public class VerifiableCredentialTest {
 		TestData testData = new TestData();
 
 		// for integrity check
-		testData.setupStore(true);
+		testData.setup(true);
 		DIDDocument test = testData.loadTestDocument();
 
 		VerifiableCredential vc = testData.loadProfileCredential();

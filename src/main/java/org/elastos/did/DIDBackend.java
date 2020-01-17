@@ -22,9 +22,14 @@
 
 package org.elastos.did;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.Random;
 
@@ -33,12 +38,18 @@ import org.elastos.did.backend.IDTransactionInfo;
 import org.elastos.did.backend.ResolveResult;
 import org.elastos.did.backend.ResolverCache;
 import org.elastos.did.exception.DIDDeactivatedException;
-import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDExpiredException;
 import org.elastos.did.exception.DIDResolveException;
 import org.elastos.did.exception.DIDStoreException;
+import org.elastos.did.exception.DIDTransactionException;
+import org.elastos.did.exception.InvalidKeyException;
+import org.elastos.did.exception.MalformedResolveResultException;
+import org.elastos.did.exception.NetworkException;
 import org.elastos.did.meta.DIDMeta;
 
+import com.fasterxml.jackson.core.JsonEncoding;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -51,44 +62,164 @@ public class DIDBackend {
 
 	private static final long DEFAULT_TTL = 24 * 60 * 60 * 1000;
 	private static final Charset utf8 = Charset.forName("UTF-8");
-	private static DIDBackend instance;
+	private static DIDResolver resolver;
 
-	private Random random;
-	private long ttl; // milliseconds
+	private static Random random = new Random();
+	private static long ttl = DEFAULT_TTL; // milliseconds
+
 	private DIDAdapter adapter;
+
+	class TransactionResult {
+		private String txid;
+		private int status;
+		private String message;
+		private boolean filled;
+
+		public TransactionResult() {
+		}
+
+		public void update(String txid, int status, String message) {
+			this.txid = txid;
+			this.status = status;
+			this.message = message;
+			this.filled = true;
+
+			synchronized(this) {
+				notifyAll();
+			}
+		}
+
+		public void update(String txid) {
+			update(txid, 0, null);
+		}
+
+		public String getTxid() {
+			return txid;
+		}
+
+		public int getStatus() {
+			return status;
+		}
+
+		public String getMessage() {
+			return message;
+		}
+
+		public boolean isEmpty() {
+			return !filled;
+		}
+	}
+
+	static class DefaultResolver implements DIDResolver {
+		private URL url;
+
+		public DefaultResolver(String resolver) throws DIDResolveException {
+			if (resolver == null || resolver.isEmpty())
+				throw new IllegalArgumentException();
+
+			try {
+				this.url = new URL(resolver);
+			} catch (MalformedURLException e) {
+				throw new DIDResolveException(e);
+			}
+		}
+
+		@Override
+		public InputStream resolve(String requestId, String did, boolean all)
+				throws DIDResolveException {
+			try {
+				HttpURLConnection connection = (HttpURLConnection)url.openConnection();
+				connection.setRequestMethod("POST");
+				connection.setRequestProperty("User-Agent",
+						"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.95 Safari/537.11");
+				connection.setRequestProperty("Content-Type", "application/json");
+				connection.setRequestProperty("Accept", "application/json");
+				connection.setDoOutput(true);
+				connection.connect();
+
+				OutputStream os = connection.getOutputStream();
+				JsonFactory factory = new JsonFactory();
+				JsonGenerator generator = factory.createGenerator(os, JsonEncoding.UTF8);
+				generator.writeStartObject();
+				generator.writeStringField("id", requestId);
+				generator.writeStringField("method", "resolvedid");
+				generator.writeFieldName("params");
+				generator.writeStartObject();
+				generator.writeStringField("did", did);
+				generator.writeBooleanField("all", all);
+				generator.writeEndObject();
+				generator.writeEndObject();
+				generator.close();
+				os.close();
+
+				int code = connection.getResponseCode();
+				if (code != 200)
+					return null;
+
+				return connection.getInputStream();
+			} catch (IOException e) {
+				throw new NetworkException("Network error.", e);
+			}
+		}
+	}
 
 	private DIDBackend(DIDAdapter adapter) {
 		this.adapter = adapter;
-		this.random = new Random();
-		this.ttl = DEFAULT_TTL;
 	}
 
-	public static void initialize(DIDAdapter adapter) {
-		if (instance == null)
-			instance = new DIDBackend(adapter);
+	/*
+	 * Recommendation for cache dir:
+	 * - Laptop/standard Java
+	 *   System.getProperty("user.home") + "/.cache.did.elastos"
+	 * - Android Java
+	 *   Context.getFilesDir() + "/.cache.did.elastos"
+	 */
+	public static void initialize(String resolverURL, File cacheDir)
+			throws DIDResolveException {
+		if (resolverURL == null || resolverURL.isEmpty() || cacheDir == null)
+			throw new IllegalArgumentException();
+
+		initialize(new DefaultResolver(resolverURL), cacheDir);
 	}
 
-	public static DIDBackend getInstance() throws DIDException {
-		if (instance == null)
-			throw new DIDException("DID backend not initialized.");
+	public static void initialize(String resolverURL, String cacheDir)
+			throws DIDResolveException {
+		if (resolverURL == null || resolverURL.isEmpty() ||
+				cacheDir == null || cacheDir.isEmpty())
+			throw new IllegalArgumentException();
 
-		return instance;
+		initialize(resolverURL, new File(cacheDir));
 	}
 
-	public DIDAdapter getAdapter() {
-		return adapter;
+	public static void initialize(DIDResolver resolver, File cacheDir) {
+		if (resolver == null || cacheDir == null)
+			throw new IllegalArgumentException();
+
+		DIDBackend.resolver = resolver;
+		ResolverCache.setCacheDir(cacheDir);
+	}
+
+	public static void initialize(DIDResolver resolver, String cacheDir) {
+		if (resolver == null || cacheDir == null || cacheDir.isEmpty())
+			throw new IllegalArgumentException();
+
+		initialize(resolver, new File(cacheDir));
+	}
+
+	protected static DIDBackend getInstance(DIDAdapter adapter) {
+		return new DIDBackend(adapter);
 	}
 
 	// Time to live in minutes
-	public void setTTL(long ttl) {
-		this.ttl = ttl > 0 ? (ttl * 60 * 1000) : 0;
+	public static void setTTL(long ttl) {
+		ttl = ttl > 0 ? (ttl * 60 * 1000) : 0;
 	}
 
-	public long getTTL() {
+	public static long getTTL() {
 		return ttl != 0 ? (ttl / 60 / 1000) : 0;
 	}
 
-	private String generateRequestId() {
+	private static String generateRequestId() {
 		StringBuffer sb = new StringBuffer();
 
 		while(sb.length() < 16)
@@ -97,11 +228,14 @@ public class DIDBackend {
 		return sb.toString();
 	}
 
-	private ResolveResult resolveFromBackend(DID did)
+	private static ResolveResult resolveFromBackend(DID did)
 			throws DIDResolveException {
 		String requestId = generateRequestId();
 
-		InputStream is = adapter.resolve(requestId, did.toString(), false);
+		if (resolver == null)
+			throw new DIDResolveException("DID resolver not initialized.");
+
+		InputStream is = resolver.resolve(requestId, did.toString(), false);
 		if (is == null)
 			throw new DIDResolveException("Unknown error.");
 
@@ -118,7 +252,7 @@ public class DIDBackend {
 		JsonNode id = node.get(ID);
 		if (id == null || id.textValue() == null ||
 				!id.textValue().equals(requestId))
-			throw new DIDResolveException("Missmatched resolve result with request.");
+			throw new MalformedResolveResultException("Mismatched resolve result with request.");
 
 		JsonNode result = node.get(RESULT);
 		if (result == null || result.isNull()) {
@@ -142,10 +276,8 @@ public class DIDBackend {
 		return rr;
 	}
 
-	protected DIDDocument resolve(DID did, boolean force)
+	protected static DIDDocument resolve(DID did, boolean force)
 			throws DIDResolveException {
-		if (did == null)
-			throw new IllegalArgumentException();
 
 		ResolveResult rr = null;
 		if (!force)
@@ -169,64 +301,101 @@ public class DIDBackend {
 			DIDDocument doc = ti.getRequest().getDocument();
 			DIDMeta meta = new DIDMeta();
 			meta.setTransactionId(ti.getTransactionId());
+			meta.setSignature(doc.getProof().getSignature());
 			meta.setUpdated(ti.getTimestamp());
 			doc.setMeta(meta);
 			return doc;
 		}
 	}
 
-	public DIDDocument resolve(DID did) throws DIDResolveException {
+	protected static DIDDocument resolve(DID did) throws DIDResolveException {
 		return resolve(did, false);
 	}
 
+	protected DIDAdapter getAdapter() {
+		return adapter;
+	}
+
+	private String createTransaction(String payload, String memo, int confirms)
+			throws DIDTransactionException {
+		TransactionResult tr = new TransactionResult();
+
+		adapter.createIdTransaction(payload, memo, confirms,
+				(txid, status, message) -> {
+					tr.update(txid, status, message);
+				});
+
+		synchronized(tr) {
+			if (tr.isEmpty()) {
+				try {
+					tr.wait();
+				} catch (InterruptedException e) {
+					throw new DIDTransactionException(e);
+				}
+			}
+		}
+
+		if (tr.getStatus() != 0)
+			throw new DIDTransactionException(
+					"Create transaction failed(" + tr.getStatus() + "): "
+					+ tr.getMessage());
+
+		return tr.getTxid();
+	}
+
 	protected String create(DIDDocument doc, DIDURL signKey, String storepass)
-			throws DIDStoreException {
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
+		return create(doc, 0, signKey, storepass);
+	}
+
+	protected String create(DIDDocument doc, int confirms, DIDURL signKey,
+			String storepass)
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
 		IDChainRequest request = IDChainRequest.create(doc, signKey, storepass);
 		String json = request.toJson(true);
-
-		try {
-			return adapter.createIdTransaction(json, null);
-		} catch (DIDException e) {
-			throw new DIDStoreException("Create ID transaction error.", e);
-		}
+		return createTransaction(json, null, confirms);
 	}
 
 	protected String update(DIDDocument doc, String previousTxid,
-			DIDURL signKey, String storepass) throws DIDStoreException {
-		IDChainRequest request = IDChainRequest.update(doc,
-				previousTxid, signKey, storepass);
-		String json = request.toJson(true);
+			DIDURL signKey, String storepass)
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
+		return update(doc, previousTxid, 0, signKey, storepass);
+	}
 
-		try {
-			return adapter.createIdTransaction(json, null);
-		} catch (DIDException e) {
-			throw new DIDStoreException("Create ID transaction error.", e);
-		}
+	protected String update(DIDDocument doc, String previousTxid, int confirms,
+			DIDURL signKey, String storepass)
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
+		IDChainRequest request = IDChainRequest.update(doc, previousTxid,
+				signKey, storepass);
+		String json = request.toJson(true);
+		return createTransaction(json, null, confirms);
 	}
 
 	protected String deactivate(DIDDocument doc, DIDURL signKey, String storepass)
-			throws DIDStoreException {
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
+		return deactivate(doc, 0, signKey, storepass);
+	}
+
+	protected String deactivate(DIDDocument doc, int confirms,
+			DIDURL signKey, String storepass)
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
 		IDChainRequest request = IDChainRequest.deactivate(doc, signKey, storepass);
 		String json = request.toJson(true);
-
-		try {
-			return adapter.createIdTransaction(json, null);
-		} catch (DIDException e) {
-			throw new DIDStoreException("Create ID transaction error.", e);
-		}
+		return createTransaction(json, null, confirms);
 	}
 
 	protected String deactivate(DID target, DIDURL targetSignKey,
 			DIDDocument doc, DIDURL signKey, String storepass)
-			throws DIDStoreException {
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
+		return deactivate(target, targetSignKey, doc, 0, signKey, storepass);
+	}
+
+	protected String deactivate(DID target, DIDURL targetSignKey,
+			DIDDocument doc, int confirms, DIDURL signKey, String storepass)
+			throws DIDTransactionException, DIDStoreException, InvalidKeyException {
 		IDChainRequest request = IDChainRequest.deactivate(target,
 				targetSignKey, doc, signKey, storepass);
 		String json = request.toJson(true);
-
-		try {
-			return adapter.createIdTransaction(json, null);
-		} catch (DIDException e) {
-			throw new DIDStoreException("Create ID transaction error.", e);
-		}
+		return createTransaction(json, null, confirms);
 	}
 }

@@ -22,22 +22,22 @@
 
 package org.elastos.did.exception;
 
-public class MalformedDIDException extends DIDSyntaxException {
-	private static final long serialVersionUID = -5320577254261002967L;
+public class DIDBackendException extends DIDException {
+	private static final long serialVersionUID = -5520759922075837222L;
 
-	public MalformedDIDException() {
+	public DIDBackendException() {
         super();
     }
 
-    public MalformedDIDException(String message) {
+    public DIDBackendException(String message) {
         super(message);
     }
 
-    public MalformedDIDException(String message, Throwable cause) {
+    public DIDBackendException(String message, Throwable cause) {
         super(message, cause);
     }
 
-    public MalformedDIDException(Throwable cause) {
+    public DIDBackendException(Throwable cause) {
         super(cause);
     }
 }

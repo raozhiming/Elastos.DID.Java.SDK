@@ -22,15 +22,12 @@
 
 package org.elastos.did;
 
-import java.io.InputStream;
-
-import org.elastos.did.exception.DIDException;
-import org.elastos.did.exception.DIDResolveException;
-
 public interface DIDAdapter {
-	public String createIdTransaction(String payload, String memo)
-			throws DIDException;
+	@FunctionalInterface
+	public interface TransactionCallback {
+	    void accept(String txid, int status, String msg);
+	}
 
-	public InputStream resolve(String requestId, String did, boolean all)
-			throws DIDResolveException;
+	public void createIdTransaction(String payload, String memo,
+			int confirms, TransactionCallback callback);
 }

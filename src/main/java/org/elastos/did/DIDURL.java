@@ -42,14 +42,14 @@ public class DIDURL implements Comparable<DIDURL> {
 	private CredentialMeta meta;
 
 	public DIDURL(DID id, String fragment) {
-		if (id == null)
+		if (id == null || fragment == null || fragment.isEmpty())
 			throw new IllegalArgumentException();
 
 		if (fragment != null) {
 			if (fragment.startsWith("did:")) {
 				ParserHelper.parse(fragment, false, new Listener());
 				if (!getDid().equals(id))
-					throw new IllegalArgumentException("Missmatched arguments");
+					throw new IllegalArgumentException("Mismatched arguments");
 
 				return;
 			}
@@ -192,12 +192,12 @@ public class DIDURL implements Comparable<DIDURL> {
 		return getMeta().getExtra(name);
 	}
 
+	// when alias is null value, mean to clean alias
 	public void setAlias(String alias) throws DIDStoreException {
 		getMeta().setAlias(alias);
 
 		if (getMeta().attachedStore())
-			if (getMeta().attachedStore())
-				getMeta().getStore().storeCredentialMeta(this.getDid(), this, meta);
+			getMeta().getStore().storeCredentialMeta(this.getDid(), this, meta);
 	}
 
 	public String getAlias() {

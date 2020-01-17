@@ -22,10 +22,11 @@
 
 package org.elastos.did.adapter;
 
-import org.elastos.did.exception.DIDException;
+import org.elastos.did.DIDAdapter;
+import org.elastos.did.exception.DIDBackendException;
 import org.elastos.did.exception.DIDResolveException;
 
-public class SPVAdapter extends AbstractAdapter {
+public class SPVAdapter implements DIDAdapter {
 	private String walletDir;
 	private String walletId;
 	private String network;
@@ -42,10 +43,8 @@ public class SPVAdapter extends AbstractAdapter {
 	}
 
 	public SPVAdapter(String walletDir, String walletId, String network,
-			String resolver, PasswordCallback passwordCallback)
-			throws DIDResolveException {
-		super(resolver);
-
+			PasswordCallback passwordCallback)
+			throws DIDBackendException, DIDResolveException {
 		handle = create(walletDir, walletId, network, "");
 		this.walletDir = walletDir;
 		this.walletId = walletId;
@@ -65,23 +64,26 @@ public class SPVAdapter extends AbstractAdapter {
 
 	private final static native boolean isAvailable(long handle);
 
-	private final static native String createIdTransaction(long handle,
-			String payload, String memo, String password);
-
-	private final static native String resolve(long handle,
-			String did, boolean all);
+	private final static native void createIdTransaction(long handle,
+			String payload, String memo, int confirms,
+			TransactionCallback callback, String password);
 
 	public boolean isAvailable() {
 		return isAvailable(handle);
 	}
 
 	@Override
-	public String createIdTransaction(String payload, String memo)
-			throws DIDException {
+	public void createIdTransaction(String payload, String memo,
+			int confirms, TransactionCallback callback) {
 		String password = passwordCallback.getPassword(walletDir, walletId);
 		if (password == null)
 			password = "";
 
-		return createIdTransaction(handle, payload, memo, password);
+		if (confirms < 0)
+			confirms = 0;
+		else if (confirms > 1)
+			confirms = 1;
+
+		createIdTransaction(handle, payload, memo, confirms, callback, password);
 	}
 }

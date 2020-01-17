@@ -23,8 +23,11 @@
 package org.elastos.did;
 
 import java.util.Date;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
-import org.elastos.did.exception.DIDException;
+import org.elastos.did.exception.DIDBackendException;
+import org.elastos.did.exception.DIDResolveException;
 import org.elastos.did.exception.DIDStoreException;
 import org.elastos.did.exception.MalformedDIDException;
 import org.elastos.did.meta.DIDMeta;
@@ -122,20 +125,39 @@ public class DID implements Comparable<DID> {
 		return getMeta().getUpdated();
 	}
 
-	public boolean isDeactivated() throws DIDException {
+	public boolean isDeactivated() {
 		return getMeta().isDeactivated();
 	}
 
-	public DIDDocument resolve(boolean force) throws DIDException {
-		DIDDocument doc = DIDBackend.getInstance().resolve(this, force);
+	public DIDDocument resolve(boolean force)
+			throws DIDBackendException, DIDResolveException {
+		DIDDocument doc = DIDBackend.resolve(this, force);
 		if (doc != null)
 			setMeta(doc.getMeta());
 
 		return doc;
 	}
 
-	public DIDDocument resolve() throws DIDException {
+	public DIDDocument resolve()
+			throws DIDBackendException, DIDResolveException {
 		return resolve(false);
+	}
+
+
+	protected CompletableFuture<DIDDocument> resolveAsync(boolean force) {
+		CompletableFuture<DIDDocument> future = CompletableFuture.supplyAsync(() -> {
+			try {
+				return resolve(force);
+			} catch (DIDBackendException e) {
+				throw new CompletionException(e);
+			}
+		});
+
+		return future;
+	}
+
+	public CompletableFuture<DIDDocument> resolveAsync(DID did) {
+		return resolveAsync(false);
 	}
 
 	@Override

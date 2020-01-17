@@ -22,22 +22,22 @@
 
 package org.elastos.did;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
 
 import org.elastos.did.exception.DIDException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class VerifiablePresentationTest {
 	@Test
 	public void testReadPresentation() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 
 		// For integrity check
 		testData.loadTestIssuer();
@@ -72,7 +72,7 @@ public class VerifiablePresentationTest {
 	@Test
 	public void testBuild() throws DIDException, IOException {
 		TestData testData = new TestData();
-		DIDStore store = testData.setupStore(true);
+		DIDStore store = testData.setup(true);
 
 		// For integrity check
 		testData.loadTestIssuer();
@@ -118,7 +118,7 @@ public class VerifiablePresentationTest {
 	@Test
 	public void testParseAndSerialize() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 
 		// For integrity check
 		testData.loadTestIssuer();

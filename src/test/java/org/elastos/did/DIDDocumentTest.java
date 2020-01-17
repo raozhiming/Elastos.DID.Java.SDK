@@ -22,12 +22,13 @@
 
 package org.elastos.did;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -36,14 +37,16 @@ import java.util.List;
 import org.elastos.did.DIDDocument.PublicKey;
 import org.elastos.did.DIDDocument.Service;
 import org.elastos.did.exception.DIDException;
+import org.elastos.did.exception.DIDObjectAlreadyExistException;
+import org.elastos.did.exception.DIDObjectNotExistException;
 import org.elastos.did.util.HDKey;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class DIDDocumentTest {
 	@Test
 	public void testGetPublicKey() throws IOException, DIDException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 
 		DIDDocument doc = testData.loadTestDocument();
 		assertNotNull(doc);
@@ -120,7 +123,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testAddPublicKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -132,14 +135,10 @@ public class DIDDocumentTest {
 		// Add 2 public keys
 		DIDURL id = new DIDURL(db.getSubject(), "test1");
 		HDKey.DerivedKey key = TestData.generateKeypair();
-		boolean success = db.addPublicKey(id, db.getSubject(),
-				key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addPublicKey(id, db.getSubject(), key.getPublicKeyBase58());
 
 		key = TestData.generateKeypair();
-		success = db.addPublicKey("test2", doc.getSubject().toString(),
-				key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addPublicKey("test2", doc.getSubject().toString(), key.getPublicKeyBase58());
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -163,7 +162,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testRemovePublicKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -174,23 +173,25 @@ public class DIDDocumentTest {
 
 		// recovery used by authorization, should failed.
 		DIDURL id = new DIDURL(doc.getSubject(), "recovery");
-		boolean success = db.removePublicKey(id);
-		assertFalse(success);
+		assertThrows(UnsupportedOperationException.class, () -> {
+			db.removePublicKey(id);
+	    });
 
 		// force remove public key, should success
-		success = db.removePublicKey(id, true);
-		assertTrue(success);
+		db.removePublicKey(id, true);
 
-		success = db.removePublicKey("key2", true);
-		assertTrue(success);
+		db.removePublicKey("key2", true);
 
 		// Key not exist, should fail.
-		success = db.removePublicKey("notExistKey", true);
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removePublicKey("notExistKey", true);
+	    });
 
 		// Can not remove default publickey, should fail.
-		success = db.removePublicKey(doc.getDefaultPublicKey(), true);
-		assertFalse(success);
+		final DIDDocument d = doc;
+		assertThrows(UnsupportedOperationException.class, () -> {
+			db.removePublicKey(d.getDefaultPublicKey(), true);
+	    });
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -212,7 +213,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testGetAuthenticationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -282,7 +283,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testAddAuthenticationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -294,40 +295,33 @@ public class DIDDocumentTest {
 		// Add 2 public keys for test.
 		DIDURL id = new DIDURL(db.getSubject(), "test1");
 		HDKey.DerivedKey key = TestData.generateKeypair();
-		boolean success = db.addPublicKey(id, db.getSubject(),
-				key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addPublicKey(id, db.getSubject(), key.getPublicKeyBase58());
 
 		key = TestData.generateKeypair();
-		success = db.addPublicKey("test2", doc.getSubject().toString(),
-				key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addPublicKey("test2", doc.getSubject().toString(), key.getPublicKeyBase58());
 
 		// Add by reference
-		success = db
-				.addAuthenticationKey(new DIDURL(doc.getSubject(), "test1"));
-		assertTrue(success);
+		db.addAuthenticationKey(new DIDURL(doc.getSubject(), "test1"));
 
-		success = db.addAuthenticationKey("test2");
-		assertTrue(success);
+		db.addAuthenticationKey("test2");
 
 		// Add new keys
 		key = TestData.generateKeypair();
-		success = db.addAuthenticationKey(new DIDURL(doc.getSubject(), "test3"),
+		db.addAuthenticationKey(new DIDURL(doc.getSubject(), "test3"),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		key = TestData.generateKeypair();
-		success = db.addAuthenticationKey("test4", key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addAuthenticationKey("test4", key.getPublicKeyBase58());
 
 		// Try to add a non existing key, should fail.
-		success = db.addAuthenticationKey("notExistKey");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.addAuthenticationKey("notExistKey");
+		});
 
 		// Try to add a key not owned by self, should fail.
-		success = db.addAuthenticationKey("recovery");
-		assertFalse(success);
+		assertThrows(UnsupportedOperationException.class, () -> {
+			db.addAuthenticationKey("recovery");
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -359,7 +353,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testRemoveAuthenticationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -370,33 +364,28 @@ public class DIDDocumentTest {
 
 		// Add 2 public keys for test
 		HDKey.DerivedKey key = TestData.generateKeypair();
-		boolean success = db.addAuthenticationKey(
+		db.addAuthenticationKey(
 				new DIDURL(doc.getSubject(), "test1"),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		key = TestData.generateKeypair();
-		success = db.addAuthenticationKey("test2", key.getPublicKeyBase58());
-		assertTrue(success);
+		db.addAuthenticationKey("test2", key.getPublicKeyBase58());
 
 		// Remote keys
-		success = db
-				.removeAuthenticationKey(new DIDURL(doc.getSubject(), "test1"));
-		assertTrue(success);
-
-		success = db.removeAuthenticationKey("test2");
-		assertTrue(success);
-
-		success = db.removeAuthenticationKey("key2");
-		assertTrue(success);
+		db.removeAuthenticationKey(new DIDURL(doc.getSubject(), "test1"))
+			.removeAuthenticationKey("test2")
+			.removeAuthenticationKey("key2");
 
 		// Key not exist, should fail.
-		success = db.removeAuthenticationKey("notExistKey");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removeAuthenticationKey("notExistKey");
+		});
 
 		// Default publickey, can not remove, should fail.
-		success = db.removeAuthenticationKey(doc.getDefaultPublicKey());
-		assertFalse(success);
+		DIDURL id = doc.getDefaultPublicKey();
+		assertThrows(UnsupportedOperationException.class, () -> {
+			db.removeAuthenticationKey(id);
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -421,7 +410,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testGetAuthorizationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -479,7 +468,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testAddAuthorizationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -491,44 +480,40 @@ public class DIDDocumentTest {
 		// Add 2 public keys for test.
 		DIDURL id = new DIDURL(db.getSubject(), "test1");
 		HDKey.DerivedKey key = TestData.generateKeypair();
-		boolean success = db.addPublicKey(id,
+		db.addPublicKey(id,
 				new DID(DID.METHOD, key.getAddress()),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		key = TestData.generateKeypair();
-		success = db.addPublicKey("test2",
+		db.addPublicKey("test2",
 				new DID(DID.METHOD, key.getAddress()).toString(),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		// Add by reference
-		success = db.addAuthorizationKey(new DIDURL(doc.getSubject(), "test1"));
-		assertTrue(success);
+		db.addAuthorizationKey(new DIDURL(doc.getSubject(), "test1"));
 
-		success = db.addAuthorizationKey("test2");
-		assertTrue(success);
+		db.addAuthorizationKey("test2");
 
 		// Add new keys
 		key = TestData.generateKeypair();
-		success = db.addAuthorizationKey(new DIDURL(doc.getSubject(), "test3"),
+		db.addAuthorizationKey(new DIDURL(doc.getSubject(), "test3"),
 				new DID(DID.METHOD, key.getAddress()),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		key = TestData.generateKeypair();
-		success = db.addAuthorizationKey("test4",
+		db.addAuthorizationKey("test4",
 				new DID(DID.METHOD, key.getAddress()).toString(),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		// Try to add a non existing key, should fail.
-		success = db.addAuthorizationKey("notExistKey");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.addAuthorizationKey("notExistKey");
+		});
 
 		// Try to add key owned by self, should fail.
-		success = db.addAuthorizationKey("key2");
-		assertFalse(success);
+		assertThrows(UnsupportedOperationException.class, () -> {
+			db.addAuthorizationKey("key2");
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -559,7 +544,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testRemoveAuthorizationKey() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -571,28 +556,23 @@ public class DIDDocumentTest {
 		// Add 2 keys for test.
 		DIDURL id = new DIDURL(db.getSubject(), "test1");
 		HDKey.DerivedKey key = TestData.generateKeypair();
-		boolean success = db.addAuthorizationKey(id,
+		db.addAuthorizationKey(id,
 				new DID(DID.METHOD, key.getAddress()),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		key = TestData.generateKeypair();
-		success = db.addAuthorizationKey("test2",
+		db.addAuthorizationKey("test2",
 				new DID(DID.METHOD, key.getAddress()).toString(),
 				key.getPublicKeyBase58());
-		assertTrue(success);
 
 		// Remove keys.
-		success = db
-				.removeAuthorizationKey(new DIDURL(doc.getSubject(), "test1"));
-		assertTrue(success);
-
-		success = db.removeAuthorizationKey("recovery");
-		assertTrue(success);
+		db.removeAuthorizationKey(new DIDURL(doc.getSubject(), "test1"))
+			.removeAuthorizationKey("recovery");
 
 		// Key not exist, should fail.
-		success = db.removeAuthorizationKey("notExistKey");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removeAuthorizationKey("notExistKey");
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -617,7 +597,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testGetCredential() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -675,7 +655,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testAddCredential() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -686,16 +666,16 @@ public class DIDDocumentTest {
 
 		// Add credentials.
 		VerifiableCredential vc = testData.loadPassportCredential();
-		boolean success = db.addCredential(vc);
-		assertTrue(success);
+		db.addCredential(vc);
 
 		vc = testData.loadTwitterCredential();
-		success = db.addCredential(vc);
-		assertTrue(success);
+		db.addCredential(vc);
 
+		final VerifiableCredential fvc = vc;
 		// Credential already exist, should fail.
-		success = db.addCredential(vc);
-		assertFalse(success);
+		assertThrows(DIDObjectAlreadyExistException.class, () -> {
+			db.addCredential(fvc);
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -718,7 +698,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testRemoveCredential() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -729,27 +709,25 @@ public class DIDDocumentTest {
 
 		// Add test credentials.
 		VerifiableCredential vc = testData.loadPassportCredential();
-		boolean success = db.addCredential(vc);
-		assertTrue(success);
+		db.addCredential(vc);
 
 		vc = testData.loadTwitterCredential();
-		success = db.addCredential(vc);
-		assertTrue(success);
+		db.addCredential(vc);
 
 		// Remove credentials
-		success = db.removeCredential("profile");
-		assertTrue(success);
+		db.removeCredential("profile");
 
-		success = db.removeCredential(new DIDURL(doc.getSubject(), "twitter"));
-		assertTrue(success);
+		db.removeCredential(new DIDURL(doc.getSubject(), "twitter"));
 
 		// Credential not exist, should fail.
-		success = db.removeCredential("notExistCredential");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removeCredential("notExistCredential");
+		});
 
-		success = db.removeCredential(
-				new DIDURL(doc.getSubject(), "notExistCredential"));
-		assertFalse(success);
+		DID did = doc.getSubject();
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removeCredential(new DIDURL(did, "notExistCredential"));
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -769,7 +747,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testGetService() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -831,7 +809,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testAddService() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -841,17 +819,16 @@ public class DIDDocumentTest {
 		DIDDocument.Builder db = doc.edit();
 
 		// Add services
-		boolean success = db.addService("test-svc-1", "Service.Testing",
+		db.addService("test-svc-1", "Service.Testing",
 				"https://www.elastos.org/testing1");
-		assertTrue(success);
 
-		success = db.addService(new DIDURL(doc.getSubject(), "test-svc-2"),
+		db.addService(new DIDURL(doc.getSubject(), "test-svc-2"),
 				"Service.Testing", "https://www.elastos.org/testing2");
-		assertTrue(success);
 
 		// Service id already exist, should failed.
-		success = db.addService("vcr", "test", "https://www.elastos.org/test");
-		assertFalse(success);
+		assertThrows(DIDObjectAlreadyExistException.class, () -> {
+			db.addService("vcr", "test", "https://www.elastos.org/test");
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -871,7 +848,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testRemoveService() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();
@@ -881,15 +858,14 @@ public class DIDDocumentTest {
 		DIDDocument.Builder db = doc.edit();
 
 		// remove services
-		boolean success = db.removeService("openid");
-		assertTrue(success);
+		db.removeService("openid");
 
-		success = db.removeService(new DIDURL(doc.getSubject(), "vcr"));
-		assertTrue(success);
+		db.removeService(new DIDURL(doc.getSubject(), "vcr"));
 
 		// Service not exist, should fail.
-		success = db.removeService("notExistService");
-		assertFalse(success);
+		assertThrows(DIDObjectNotExistException.class, () -> {
+			db.removeService("notExistService");
+		});
 
 		doc = db.seal(TestConfig.storePass);
 		assertNotNull(doc);
@@ -909,7 +885,7 @@ public class DIDDocumentTest {
 	public void testParseAndSerializeDocument()
 			throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument compact = DIDDocument
@@ -954,7 +930,7 @@ public class DIDDocumentTest {
 	@Test
 	public void testSignAndVerify() throws DIDException, IOException {
 		TestData testData = new TestData();
-		testData.setupStore(true);
+		testData.setup(true);
 		testData.initIdentity();
 
 		DIDDocument doc = testData.loadTestDocument();

@@ -22,11 +22,12 @@
 
 package org.elastos.did;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
@@ -41,20 +42,14 @@ import org.elastos.did.exception.DIDDeactivatedException;
 import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDStoreException;
 import org.elastos.did.exception.WrongPasswordException;
-import org.elastos.did.meta.DIDMeta;
 import org.elastos.did.util.HDKey;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.jupiter.api.Test;
 
 public class DIDStoreTest {
-	@Rule
-	public ExpectedException expectedEx = ExpectedException.none();
-
 	@Test
 	public void testCreateEmptyStore() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
 
     	File file = new File(TestConfig.storeRoot);
     	assertTrue(file.exists());
@@ -67,17 +62,20 @@ public class DIDStoreTest {
     	assertFalse(store.containsPrivateIdentity());
 	}
 
-	@Test(expected = DIDStoreException.class)
+	@Test
 	public void testCreateDidInEmptyStore() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
-    	store.newDid("this will be fail", TestConfig.storePass);
+    	DIDStore store = testData.setup(true);
+
+    	assertThrows(DIDStoreException.class, () -> {
+    		store.newDid("this will be fail", TestConfig.storePass);
+    	});
 	}
 
 	@Test
 	public void testInitPrivateIdentity() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	assertFalse(store.containsPrivateIdentity());
 
     	String mnemonic = testData.initIdentity();
@@ -98,7 +96,7 @@ public class DIDStoreTest {
     	assertTrue(file.exists());
     	assertTrue(file.isFile());
 
-    	store = DIDStore.open("filesystem", TestConfig.storeRoot);
+    	store = DIDStore.open("filesystem", TestConfig.storeRoot, testData.getAdapter());
     	assertTrue(store.containsPrivateIdentity());
 
     	String exportedMnemonic = store.exportMnemonic(TestConfig.storePass);
@@ -111,7 +109,7 @@ public class DIDStoreTest {
 		String mnemonic = "cloth always junk crash fun exist stumble shift over benefit fun toe";
 
 		TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	assertFalse(store.containsPrivateIdentity());
 
     	store.initPrivateIdentity(Mnemonic.ENGLISH, mnemonic, "", TestConfig.storePass);
@@ -132,7 +130,7 @@ public class DIDStoreTest {
     	assertTrue(file.exists());
     	assertTrue(file.isFile());
 
-    	store = DIDStore.open("filesystem", TestConfig.storeRoot);
+    	store = DIDStore.open("filesystem", TestConfig.storeRoot, testData.getAdapter());
     	assertTrue(store.containsPrivateIdentity());
 
     	String exportedMnemonic = store.exportMnemonic(TestConfig.storePass);
@@ -144,9 +142,43 @@ public class DIDStoreTest {
 	}
 
 	@Test
+	public void testInitPrivateIdentityWithRootKey() throws DIDException {
+		String expectedIDString = "iYbPqEA98rwvDyA5YT6a3mu8UZy87DLEMR";
+		String rootKey = "xprv9s21ZrQH143K4biiQbUq8369meTb1R8KnstYFAKtfwk3vF8uvFd1EC2s49bMQsbdbmdJxUWRkuC48CXPutFfynYFVGnoeq8LJZhfd9QjvUt";
+
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	assertFalse(store.containsPrivateIdentity());
+
+    	store.initPrivateIdentity(rootKey, TestConfig.storePass);
+    	assertTrue(store.containsPrivateIdentity());
+
+    	File file = new File(TestConfig.storeRoot + File.separator + "private"
+    			+ File.separator + "key");
+    	assertTrue(file.exists());
+    	assertTrue(file.isFile());
+
+    	file = new File(TestConfig.storeRoot + File.separator + "private"
+    			+ File.separator + "index");
+    	assertTrue(file.exists());
+    	assertTrue(file.isFile());
+
+    	file = new File(TestConfig.storeRoot + File.separator + "private"
+    			+ File.separator + "mnemonic");
+    	assertFalse(file.exists());
+
+    	store = DIDStore.open("filesystem", TestConfig.storeRoot, testData.getAdapter());
+    	assertTrue(store.containsPrivateIdentity());
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertNotNull(doc);
+    	assertEquals(expectedIDString, doc.getSubject().getMethodSpecificId());
+	}
+
+	@Test
 	public void testCreateDIDWithAlias() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	String alias = "my first did";
@@ -173,6 +205,8 @@ public class DIDStoreTest {
 
     	resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
+
+    	// test alias
     	store.storeDid(resolved);
     	assertEquals(alias, resolved.getAlias());
     	assertEquals(doc.getSubject(), resolved.getSubject());
@@ -185,7 +219,7 @@ public class DIDStoreTest {
 	@Test
 	public void tesCreateDIDWithoutAlias() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -214,7 +248,7 @@ public class DIDStoreTest {
 	@Test
 	public void testUpdateDid() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -224,65 +258,43 @@ public class DIDStoreTest {
 
     	DIDDocument resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
-    	store.storeDid(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
 
     	// Update
-    	DIDDocument.Builder db = resolved.edit();
+    	DIDDocument.Builder db = doc.edit();
     	HDKey.DerivedKey key = TestData.generateKeypair();
     	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
-    	DIDDocument newDoc = db.seal(TestConfig.storePass);
-    	assertEquals(2, newDoc.getPublicKeyCount());
-    	assertEquals(2, newDoc.getAuthenticationKeyCount());
-    	store.storeDid(newDoc);
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
 
-    	store.publishDid(newDoc.getSubject(), TestConfig.storePass);
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
 
     	resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
-    	assertEquals(newDoc.toString(), resolved.toString());
-    	store.storeDid(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
 
     	// Update again
-    	db = resolved.edit();
+    	db = doc.edit();
     	key = TestData.generateKeypair();
     	db.addAuthenticationKey("key2", key.getPublicKeyBase58());
-    	newDoc = db.seal(TestConfig.storePass);
-    	assertEquals(3, newDoc.getPublicKeyCount());
-    	assertEquals(3, newDoc.getAuthenticationKeyCount());
-    	store.storeDid(newDoc);
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(3, doc.getPublicKeyCount());
+    	assertEquals(3, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
 
-    	store.publishDid(newDoc.getSubject(), TestConfig.storePass);
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
 
     	resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
-    	assertEquals(newDoc.toString(), resolved.toString());
+    	assertEquals(doc.toString(), resolved.toString());
 	}
 
 	@Test
-	public void testUpdateNonExistedDid() throws DIDException {
-		expectedEx.expect(DIDStoreException.class);
-		expectedEx.expectMessage("Create ID transaction error.");
-
-		TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
-    	testData.initIdentity();
-
-    	DIDDocument doc = store.newDid(TestConfig.storePass);
-    	assertTrue(doc.isValid());
-    	// fake a txid
-    	DIDMeta meta = new DIDMeta();
-    	meta.setStore(store);
-    	meta.setTransactionId("12345678");
-    	store.storeDidMeta(doc.getSubject(), meta);
-
-    	// Update will fail
-    	store.publishDid(doc.getSubject(), TestConfig.storePass);
-	}
-
-	@Test(expected = DIDDeactivatedException.class)
-	public void testDeactivateSelfAfterCreate() throws DIDException {
+	public void testUpdateDidWithoutTxid() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -292,18 +304,333 @@ public class DIDStoreTest {
 
     	DIDDocument resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update again
+    	db = doc.edit();
+    	key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key2", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(3, doc.getPublicKeyCount());
+    	assertEquals(3, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+	}
+
+
+	@Test
+	public void testUpdateDidWithoutSignature() throws DIDException {
+    	TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setSignature(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setSignature(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update again
+    	db = doc.edit();
+    	key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key2", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(3, doc.getPublicKeyCount());
+    	assertEquals(3, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+	}
+
+	@Test
+	public void testUpdateDidWithoutTxidAndSignature() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId(null);
+    	doc.getMeta().setSignature(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	DID did = doc.getSubject();
+    	Exception e = assertThrows(DIDStoreException.class, () -> {
+    		store.publishDid(did, TestConfig.storePass);
+    	});
+    	assertEquals("DID document not up-to-date", e.getMessage());
+	}
+
+	@Test
+	public void testForceUpdateDidWithoutTxidAndSignature() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId(null);
+    	doc.getMeta().setSignature(null);
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), 1, doc.getDefaultPublicKey(),
+    			true, TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+	}
+
+	@Test
+	public void testUpdateDidWithWrongTxid() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId("1234567890");
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	DID did = doc.getSubject();
+    	Exception e = assertThrows(DIDStoreException.class, () -> {
+    		store.publishDid(did, TestConfig.storePass);
+    	});
+    	assertEquals("DID document not up-to-date", e.getMessage());
+	}
+
+	@Test
+	public void testUpdateDidWithWrongSignature() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setSignature("1234567890");
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	DID did = doc.getSubject();
+    	Exception e = assertThrows(DIDStoreException.class, () -> {
+    		store.publishDid(did, TestConfig.storePass);
+    	});
+    	assertEquals("DID document not up-to-date", e.getMessage());
+	}
+
+	@Test
+	public void testForceUpdateDidWithWrongTxid() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setTransactionId("1234567890");
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), 1, doc.getDefaultPublicKey(),
+    			true, TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+	}
+
+	@Test
+	public void testForceUpdateDidWithWrongSignature() throws DIDException {
+		TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+
+    	doc.getMeta().setSignature("1234567890");
+    	store.storeDidMeta(doc.getSubject(), doc.getMeta());
+
+    	// Update
+    	DIDDocument.Builder db = doc.edit();
+    	HDKey.DerivedKey key = TestData.generateKeypair();
+    	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
+
+    	store.publishDid(doc.getSubject(), 1, doc.getDefaultPublicKey(),
+    			true, TestConfig.storePass);
+
+    	resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
+	}
+
+	@Test
+	public void testDeactivateSelfAfterCreate() throws DIDException {
+    	TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
+
+    	DIDDocument doc = store.newDid(TestConfig.storePass);
+    	assertTrue(doc.isValid());
+
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
+
+    	DIDDocument resolved = doc.getSubject().resolve(true);
+    	assertNotNull(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
 
     	store.deactivateDid(doc.getSubject(), TestConfig.storePass);
 
-    	resolved = doc.getSubject().resolve(true);
-    	// Dead code
-    	assertNull(resolved);
+    	assertThrows(DIDDeactivatedException.class, () -> {
+    		doc.getSubject().resolve(true);
+    	});
 	}
 
-	@Test(expected = DIDDeactivatedException.class)
+	@Test
 	public void testDeactivateSelfAfterUpdate() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -313,35 +640,35 @@ public class DIDStoreTest {
 
     	DIDDocument resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
-    	store.storeDid(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
 
     	// Update
-    	DIDDocument.Builder db = resolved.edit();
+    	DIDDocument.Builder db = doc.edit();
     	HDKey.DerivedKey key = TestData.generateKeypair();
     	db.addAuthenticationKey("key1", key.getPublicKeyBase58());
-    	DIDDocument newDoc = db.seal(TestConfig.storePass);
-    	assertEquals(2, newDoc.getPublicKeyCount());
-    	assertEquals(2, newDoc.getAuthenticationKeyCount());
-    	store.storeDid(newDoc);
+    	doc = db.seal(TestConfig.storePass);
+    	assertEquals(2, doc.getPublicKeyCount());
+    	assertEquals(2, doc.getAuthenticationKeyCount());
+    	store.storeDid(doc);
 
-    	store.publishDid(newDoc.getSubject(), TestConfig.storePass);
+    	store.publishDid(doc.getSubject(), TestConfig.storePass);
 
     	resolved = doc.getSubject().resolve(true);
     	assertNotNull(resolved);
-    	assertEquals(newDoc.toString(), resolved.toString());
-    	store.storeDid(resolved);
+    	assertEquals(doc.toString(), resolved.toString());
 
-    	store.deactivateDid(newDoc.getSubject(), TestConfig.storePass);
+    	store.deactivateDid(doc.getSubject(), TestConfig.storePass);
 
-    	resolved = doc.getSubject().resolve(true);
-    	// dead code
-    	assertNull(resolved);
+    	DID did = doc.getSubject();
+    	assertThrows(DIDDeactivatedException.class, () -> {
+    		did.resolve(true);
+    	});
 	}
 
-	@Test(expected = DIDDeactivatedException.class)
+	@Test
 	public void testDeactivateWithAuthorization1() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -370,15 +697,16 @@ public class DIDStoreTest {
 
     	store.deactivateDid(target.getSubject(), doc.getSubject(), TestConfig.storePass);
 
-    	resolved = target.getSubject().resolve(true);
-    	// Dead code
-    	assertNull(resolved);
+    	DID did = target.getSubject();
+    	assertThrows(DIDDeactivatedException.class, () -> {
+    		did.resolve(true);
+    	});
 	}
 
-	@Test(expected = DIDDeactivatedException.class)
+	@Test
 	public void testDeactivateWithAuthorization2() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -417,15 +745,16 @@ public class DIDStoreTest {
 
     	store.deactivateDid(target.getSubject(), doc.getSubject(), id, TestConfig.storePass);
 
-    	resolved = target.getSubject().resolve(true);
-    	// Dead code
-    	assertNull(resolved);
+    	DID did = target.getSubject();
+    	assertThrows(DIDDeactivatedException.class, () -> {
+    		did.resolve(true);
+    	});
 	}
 
-	@Test(expected = DIDDeactivatedException.class)
+	@Test
 	public void testDeactivateWithAuthorization3() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	DIDDocument doc = store.newDid(TestConfig.storePass);
@@ -464,15 +793,16 @@ public class DIDStoreTest {
 
     	store.deactivateDid(target.getSubject(), doc.getSubject(), TestConfig.storePass);
 
-    	resolved = target.getSubject().resolve(true);
-    	// Dead code
-    	assertNull(resolved);
+    	DID did = target.getSubject();
+    	assertThrows(DIDDeactivatedException.class, () -> {
+    		did.resolve(true);
+    	});
 	}
 
 	@Test
 	public void testBulkCreate() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
 		for (int i = 0; i < 100; i++) {
@@ -521,7 +851,7 @@ public class DIDStoreTest {
 	@Test
 	public void testDeleteDID() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	// Create test DIDs
@@ -564,7 +894,7 @@ public class DIDStoreTest {
 	@Test
 	public void testStoreAndLoadDID() throws DIDException, IOException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	// Store test data into current store
@@ -594,7 +924,7 @@ public class DIDStoreTest {
 	@Test
 	public void testLoadCredentials() throws DIDException, IOException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	// Store test data into current store
@@ -645,7 +975,7 @@ public class DIDStoreTest {
 	@Test
 	public void testListCredentials() throws DIDException, IOException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	// Store test data into current store
@@ -679,7 +1009,7 @@ public class DIDStoreTest {
 	@Test
 	public void testDeleteCredential() throws DIDException, IOException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
     	// Store test data into current store
@@ -748,7 +1078,7 @@ public class DIDStoreTest {
 	@Test
 	public void testChangePassword() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
 		for (int i = 0; i < 10; i++) {
@@ -808,10 +1138,10 @@ public class DIDStoreTest {
 		assertNotNull(doc);
 	}
 
-	@Test(expected = DIDStoreException.class)
+	@Test
 	public void testChangePasswordWithWrongPassword() throws DIDException {
     	TestData testData = new TestData();
-    	DIDStore store = testData.setupStore(true);
+    	DIDStore store = testData.setup(true);
     	testData.initIdentity();
 
 		for (int i = 0; i < 10; i++) {
@@ -856,11 +1186,9 @@ public class DIDStoreTest {
 		dids = store.listDids(DIDStore.DID_NO_PRIVATEKEY);
 		assertEquals(0, dids.size());
 
-		store.changePassword("wrongpasswd", "newpasswd");
-
-		// Dead code
-		DIDDocument doc = store.newDid("newpasswd");
-		assertNotNull(doc);
+		assertThrows(DIDStoreException.class, () -> {
+			store.changePassword("wrongpasswd", "newpasswd");
+		});
 	}
 
 	@Test
@@ -868,8 +1196,9 @@ public class DIDStoreTest {
 		URL url = this.getClass().getResource("/teststore");
 		File dir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath(), adapter);
 
        	List<DID> dids = store.listDids(DIDStore.DID_ALL);
        	assertEquals(2, dids.size());
@@ -899,17 +1228,18 @@ public class DIDStoreTest {
        	}
 	}
 
-	@Test(expected = WrongPasswordException.class)
+	@Test
 	public void testCompatibilityNewDIDWithWrongPass() throws DIDException {
 		URL url = this.getClass().getResource("/teststore");
 		File dir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath(), adapter);
 
-       	DIDDocument doc = store.newDid("wrongpass");
-       	// Dead code
-       	assertNull(doc);
+		assertThrows(WrongPasswordException.class, () -> {
+			store.newDid("wrongpass");
+		});
 	}
 
 	@Test
@@ -917,8 +1247,9 @@ public class DIDStoreTest {
 		URL url = this.getClass().getResource("/teststore");
 		File dir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", dir.getAbsolutePath(), adapter);
 
        	DIDDocument doc = store.newDid(TestConfig.storePass);
        	assertNotNull(doc);
@@ -952,14 +1283,15 @@ public class DIDStoreTest {
 	}
 
 	private void testStorePerformance(boolean cached) throws DIDException {
-		DIDBackend.initialize(new DummyAdapter());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
 
 		Utils.deleteFile(new File(TestConfig.storeRoot));
 		DIDStore store = null;
     	if (cached)
-    		store = DIDStore.open("filesystem", TestConfig.storeRoot);
+    		store = DIDStore.open("filesystem", TestConfig.storeRoot, adapter);
     	else
-    		store = DIDStore.open("filesystem", TestConfig.storeRoot, 0, 0);
+    		store = DIDStore.open("filesystem", TestConfig.storeRoot, 0, 0, adapter);
 
        	String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
     	store.initPrivateIdentity(Mnemonic.ENGLISH, mnemonic,
@@ -1006,7 +1338,7 @@ public class DIDStoreTest {
 
 		for (int i = 0; i < stores.length; i++) {
 			Utils.deleteFile(new File(TestConfig.storeRoot + i));
-			stores[i] = DIDStore.open("filesystem", TestConfig.storeRoot + i);
+			stores[i] = DIDStore.open("filesystem", TestConfig.storeRoot + i, new DummyAdapter());
 			assertNotNull(stores[i]);
 			String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
 			stores[i].initPrivateIdentity(Mnemonic.ENGLISH, mnemonic, "", TestConfig.storePass);
@@ -1029,8 +1361,9 @@ public class DIDStoreTest {
 		URL url = this.getClass().getResource("/teststore");
 		File storeDir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath(), adapter);
 
 		DID did = store.listDids(DIDStore.DID_ALL).get(0);
 
@@ -1042,7 +1375,7 @@ public class DIDStoreTest {
 
 		File restoreDir = new File(tempDir, "restore");
 		Utils.deleteFile(restoreDir);
-		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath());
+		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath(), adapter);
 		store2.importDid(exportFile, "password", TestConfig.storePass);
 
 		String path = "ids" + File.separator + did.getMethodSpecificId();
@@ -1058,8 +1391,9 @@ public class DIDStoreTest {
 		URL url = this.getClass().getResource("/teststore");
 		File storeDir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath(), adapter);
 
 		File tempDir = new File(TestConfig.tempDir);
 		tempDir.mkdirs();
@@ -1069,7 +1403,7 @@ public class DIDStoreTest {
 
 		File restoreDir = new File(tempDir, "restore");
 		Utils.deleteFile(restoreDir);
-		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath());
+		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath(), adapter);
 		store2.importPrivateIdentity(exportFile, "password", TestConfig.storePass);
 
 		File privateDir = new File(storeDir, "private");
@@ -1084,8 +1418,9 @@ public class DIDStoreTest {
 		URL url = this.getClass().getResource("/teststore");
 		File storeDir = new File(url.getPath());
 
-		DIDBackend.initialize(new DummyAdapter());
-		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath());
+		DummyAdapter adapter = new DummyAdapter();
+		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
+		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath(), adapter);
 
 		File tempDir = new File(TestConfig.tempDir);
 		tempDir.mkdirs();
@@ -1095,7 +1430,7 @@ public class DIDStoreTest {
 
 		File restoreDir = new File(tempDir, "restore");
 		Utils.deleteFile(restoreDir);
-		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath());
+		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath(), adapter);
 		store2.importStore(exportFile, "password", TestConfig.storePass);
 
 		assertTrue(storeDir.exists());

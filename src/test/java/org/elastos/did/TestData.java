@@ -38,8 +38,11 @@ import org.elastos.did.util.HDKey;
 public final class TestData {
 	private static DummyAdapter dummyAdapter;
 	private static DIDAdapter spvAdapter;
+
 	private static HDKey rootKey;
 	private static int index;
+
+	private DIDAdapter adapter;
 
 	private DIDDocument testIssuer;
 	private String issuerCompactJson;
@@ -76,11 +79,12 @@ public final class TestData {
 
 	private DIDStore store;
 
-	public DIDStore setupStore(boolean dummyBackend) throws DIDException {
-		DIDAdapter adapter;
+	protected static File getResolverCacheDir() {
+		return new File(System.getProperty("user.home") +
+				File.separator + ".cache.did.elastos");
+	}
 
-		ResolverCache.reset();
-
+	public DIDStore setup(boolean dummyBackend) throws DIDException {
 		if (dummyBackend) {
 			if (TestData.dummyAdapter == null)
 				TestData.dummyAdapter = new DummyAdapter(TestConfig.verbose);
@@ -88,23 +92,57 @@ public final class TestData {
 				TestData.dummyAdapter.reset();
 
 			adapter = TestData.dummyAdapter;
+
+			DIDBackend.initialize((DIDResolver)adapter, getResolverCacheDir());
 		} else {
 			if (TestData.spvAdapter == null)
 				TestData.spvAdapter = new SPVAdapter(TestConfig.walletDir,
 						TestConfig.walletId, TestConfig.networkConfig,
-						TestConfig.resolver, new SPVAdapter.PasswordCallback() {
+						new SPVAdapter.PasswordCallback() {
 							@Override
 							public String getPassword(String walletDir, String walletId) {
 								return TestConfig.walletPassword;
 							}
 						});
+
 			adapter = TestData.spvAdapter;
+
+			DIDBackend.initialize(TestConfig.resolver, getResolverCacheDir());
 		}
 
-		DIDBackend.initialize(adapter);
+		ResolverCache.reset();
     	Utils.deleteFile(new File(TestConfig.storeRoot));
-    	store = DIDStore.open("filesystem", TestConfig.storeRoot);
+    	store = DIDStore.open("filesystem", TestConfig.storeRoot, adapter);
     	return store;
+	}
+
+	public DIDAdapter getAdapter() {
+		return adapter;
+	}
+
+	public void waitForWalletAvaliable() throws DIDException {
+		SPVAdapter spvAdapter = null;
+
+		// need synchronize?
+		if (adapter instanceof SPVAdapter)
+			spvAdapter = (SPVAdapter)adapter;
+
+		if (spvAdapter != null) {
+			System.out.print("Waiting for wallet available");
+			while (true) {
+				if (spvAdapter.isAvailable()) {
+					System.out.println(".OK");
+					break;
+				} else {
+					System.out.print(".");
+				}
+
+				try {
+					Thread.sleep(30000);
+				} catch (InterruptedException ignore) {
+				}
+			}
+		}
 	}
 
 	public String initIdentity() throws DIDException {

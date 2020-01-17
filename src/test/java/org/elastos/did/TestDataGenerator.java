@@ -48,18 +48,18 @@ public class TestDataGenerator {
 	private String init(String storeRoot) throws IOException, DIDException {
 		adapter = new SPVAdapter(TestConfig.walletDir,
 				TestConfig.walletId, TestConfig.networkConfig,
-				TestConfig.resolver, new SPVAdapter.PasswordCallback() {
+				new SPVAdapter.PasswordCallback() {
 					@Override
 					public String getPassword(String walletDir, String walletId) {
 						return TestConfig.walletPassword;
 					}
 				});
 
+		DIDBackend.initialize(TestConfig.resolver, TestData.getResolverCacheDir());
 		ResolverCache.reset();
-		DIDBackend.initialize(adapter);
 
 		Utils.deleteFile(new File(storeRoot));
-		store = DIDStore.open("filesystem", storeRoot);
+		store = DIDStore.open("filesystem", storeRoot, adapter);
 
     	String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
     	store.initPrivateIdentity(Mnemonic.ENGLISH, mnemonic,

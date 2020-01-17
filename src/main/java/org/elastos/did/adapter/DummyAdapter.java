@@ -32,16 +32,17 @@ import java.util.Random;
 import org.elastos.did.Constants;
 import org.elastos.did.DID;
 import org.elastos.did.DIDAdapter;
+import org.elastos.did.DIDResolver;
 import org.elastos.did.backend.IDChainRequest;
 import org.elastos.did.backend.IDTransactionInfo;
-import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDResolveException;
+import org.elastos.did.exception.DIDTransactionException;
 
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 
-public class DummyAdapter implements DIDAdapter {
+public class DummyAdapter implements DIDAdapter, DIDResolver {
 	private static Random random = new Random();
 
 	private boolean verbose;
@@ -75,67 +76,73 @@ public class DummyAdapter implements DIDAdapter {
 		return null;
 	}
 
+	private String createIdTransaction(String payload, String memo)
+			throws DIDTransactionException {
+		IDChainRequest request = IDChainRequest.fromJson(payload);
+
+		if (verbose) {
+			System.out.println("ID Transaction: " + request.getOperation()
+					+ "[" + request.getDid() + "]");
+			System.out.println("    " + request.toJson(false));
+
+			if (request.getOperation() != IDChainRequest.Operation.DEACTIVATE)
+				System.out.println("    " + request.getDocument().toString(true));
+		}
+
+		if (!request.isValid())
+			throw new DIDTransactionException("Invalid ID transaction request.");
+
+		if (request.getOperation() != IDChainRequest.Operation.DEACTIVATE) {
+			if (!request.getDocument().isValid())
+				throw new DIDTransactionException("Invalid DID Document.");
+		}
+
+		IDTransactionInfo ti = getLastTransaction(request.getDid());
+
+		switch (request.getOperation()) {
+		case CREATE:
+			if (ti != null)
+				throw new DIDTransactionException("DID already exist.");
+
+			break;
+
+		case UPDATE:
+			if (ti == null)
+				throw new DIDTransactionException("DID not exist.");
+
+			if (ti.getOperation() == IDChainRequest.Operation.DEACTIVATE)
+				throw new DIDTransactionException("DID already dactivated.");
+
+			if (!request.getPreviousTxid().equals(ti.getTransactionId()))
+				throw new DIDTransactionException("Previous transaction id missmatch.");
+
+			break;
+
+		case DEACTIVATE:
+			if (ti == null)
+				throw new DIDTransactionException("DID not exist.");
+
+			if (ti.getOperation() == IDChainRequest.Operation.DEACTIVATE)
+				throw new DIDTransactionException("DID already dactivated.");
+
+			break;
+		}
+
+		ti = new IDTransactionInfo(generateTxid(),
+				Calendar.getInstance(Constants.UTC).getTime(), request);
+		idtxs.add(0, ti);
+
+		return ti.getTransactionId();
+	}
+
 	@Override
-	public String createIdTransaction(String payload, String memo)
-			throws DIDException {
+	public void createIdTransaction(String payload, String memo,
+			int confirms, TransactionCallback callback) {
 		try {
-			IDChainRequest request = IDChainRequest.fromJson(payload);
-
-			if (verbose) {
-				System.out.println("ID Transaction: " + request.getOperation()
-						+ "[" + request.getDid() + "]");
-				System.out.println("    " + request.toJson(false));
-
-				if (request.getOperation() != IDChainRequest.Operation.DEACTIVATE)
-					System.out.println("    " + request.getDocument().toString(true));
-			}
-
-			if (!request.isValid())
-				throw new DIDException("Invalid ID transaction request.");
-
-			if (request.getOperation() != IDChainRequest.Operation.DEACTIVATE) {
-				if (!request.getDocument().isValid())
-					throw new DIDException("Invalid DID Document.");
-			}
-
-			IDTransactionInfo ti = getLastTransaction(request.getDid());
-
-			switch (request.getOperation()) {
-			case CREATE:
-				if (ti != null)
-					throw new DIDException("DID already exist.");
-
-				break;
-
-			case UPDATE:
-				if (ti == null)
-					throw new DIDException("DID not exist.");
-
-				if (ti.getOperation() == IDChainRequest.Operation.DEACTIVATE)
-					throw new DIDException("DID already dactivated.");
-
-				if (!request.getPreviousTxid().equals(ti.getTransactionId()))
-					throw new DIDException("Previous transaction id missmatch.");
-
-				break;
-
-			case DEACTIVATE:
-				if (ti == null)
-					throw new DIDException("DID not exist.");
-
-				if (ti.getOperation() == IDChainRequest.Operation.DEACTIVATE)
-					throw new DIDException("DID already dactivated.");
-
-				break;
-			}
-
-			ti = new IDTransactionInfo(generateTxid(),
-					Calendar.getInstance(Constants.UTC).getTime(), request);
-			idtxs.add(0, ti);
-
-			return ti.getTransactionId();
-		} catch (DIDException e) {
-			throw new DIDException("Parse ID Transaction payload error.", e);
+			String txid = createIdTransaction(payload, memo);
+			callback.accept(txid, 0, null);
+		} catch (Exception e) {
+			callback.accept(null, -1, e.getMessage());
 		}
 	}
 
