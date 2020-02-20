@@ -32,15 +32,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.elastos.did.DIDDocument.PublicKey;
 import org.elastos.did.DIDDocument.Service;
+import org.elastos.did.crypto.HDKey;
 import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDObjectAlreadyExistException;
 import org.elastos.did.exception.DIDObjectNotExistException;
-import org.elastos.did.util.HDKey;
 import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class DIDDocumentTest {
 	@Test
@@ -594,6 +599,49 @@ public class DIDDocumentTest {
 		assertEquals(1, doc.getAuthorizationKeyCount());
 	}
 
+	/*
+	@Test
+	public void testGetJceKeyPair() throws DIDException, IOException {
+		TestData testData = new TestData();
+		testData.setup(true);
+		testData.initIdentity();
+
+		DIDDocument doc = testData.loadTestDocument();
+		assertNotNull(doc);
+		assertTrue(doc.isValid());
+
+		KeyPair keypair = doc.getKeyPair(doc.getDefaultPublicKey());
+		assertNotNull(keypair);
+		assertNotNull(keypair.getPublic());
+		assertNull(keypair.getPrivate());
+
+		keypair = doc.getKeyPair(doc.getDefaultPublicKey(), TestConfig.storePass);
+		assertNotNull(keypair);
+		assertNotNull(keypair.getPublic());
+		assertNotNull(keypair.getPrivate());
+
+		keypair = doc.getKeyPair("key2");
+		assertNotNull(keypair);
+		assertNotNull(keypair.getPublic());
+		assertNull(keypair.getPrivate());
+
+		keypair = doc.getKeyPair("key2", TestConfig.storePass);
+		assertNotNull(keypair);
+		assertNotNull(keypair.getPublic());
+		assertNotNull(keypair.getPrivate());
+
+		keypair = doc.getKeyPair("recovery");
+		assertNotNull(keypair);
+		assertNotNull(keypair.getPublic());
+		assertNull(keypair.getPrivate());
+
+		Exception e = assertThrows(InvalidKeyException.class, () -> {
+			doc.getKeyPair("recovery", TestConfig.storePass);
+		});
+		assertEquals("Don't have private key", e.getMessage());
+	}
+	*/
+
 	@Test
 	public void testGetCredential() throws DIDException, IOException {
 		TestData testData = new TestData();
@@ -693,6 +741,57 @@ public class DIDDocumentTest {
 
 		// Should contains 3 credentials.
 		assertEquals(4, doc.getCredentialCount());
+	}
+
+	@Test
+	public void testAddSelfClaimedCredential() throws DIDException, IOException {
+		TestData testData = new TestData();
+		testData.setup(true);
+		testData.initIdentity();
+
+		DIDDocument doc = testData.loadTestDocument();
+		assertNotNull(doc);
+		assertTrue(doc.isValid());
+
+		DIDDocument.Builder db = doc.edit();
+
+		// Add credentials.
+		Map<String, String> subject = new HashMap<String, String>();
+		subject.put("passport", "S653258Z07");
+		db.addCredential("passport", subject, TestConfig.storePass);
+
+		String subjectjson = "{\"name\":\"Jay Holtslander\",\"alternateName\":\"Jason Holtslander\"}";
+		db.addCredential("name", subjectjson, TestConfig.storePass);
+
+		ObjectMapper mapper = new ObjectMapper();
+		String json = "{\"twitter\":\"@john\"}";
+		JsonNode subjectnode = mapper.readTree(json);
+		db.addCredential("twitter", subjectnode, TestConfig.storePass);
+
+		doc = db.seal(TestConfig.storePass);
+		assertNotNull(doc);
+		assertTrue(doc.isValid());
+
+		// Check new added credential.
+		VerifiableCredential vc = doc.getCredential("passport");
+		assertNotNull(vc);
+		assertEquals(new DIDURL(doc.getSubject(), "passport"), vc.getId());
+		assertTrue(vc.isSelfProclaimed());
+
+		DIDURL id = new DIDURL(doc.getSubject(), "name");
+		vc = doc.getCredential(id);
+		assertNotNull(vc);
+		assertEquals(id, vc.getId());
+		assertTrue(vc.isSelfProclaimed());
+
+		id = new DIDURL(doc.getSubject(), "twitter");
+		vc = doc.getCredential(id);
+		assertNotNull(vc);
+		assertEquals(id, vc.getId());
+		assertTrue(vc.isSelfProclaimed());
+
+		// Should contains 3 credentials.
+		assertEquals(5, doc.getCredentialCount());
 	}
 
 	@Test

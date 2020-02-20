@@ -29,6 +29,8 @@ import java.io.OutputStreamWriter;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.security.KeyPair;
+import java.security.PrivateKey;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -38,6 +40,11 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Function;
 
+import org.elastos.did.crypto.Base58;
+import org.elastos.did.crypto.Base64;
+import org.elastos.did.crypto.EcdsaSigner;
+import org.elastos.did.crypto.HDKey;
+import org.elastos.did.crypto.HDKey.DerivedKey;
 import org.elastos.did.exception.DIDBackendException;
 import org.elastos.did.exception.DIDNotFoundException;
 import org.elastos.did.exception.DIDObjectAlreadyExistException;
@@ -48,11 +55,10 @@ import org.elastos.did.exception.InvalidKeyException;
 import org.elastos.did.exception.MalformedCredentialException;
 import org.elastos.did.exception.MalformedDIDException;
 import org.elastos.did.exception.MalformedDocumentException;
+import org.elastos.did.jwt.JwtBuilder;
+import org.elastos.did.jwt.JwtParserBuilder;
+import org.elastos.did.jwt.KeyProvider;
 import org.elastos.did.meta.DIDMeta;
-import org.elastos.did.util.Base58;
-import org.elastos.did.util.Base64;
-import org.elastos.did.util.EcdsaSigner;
-import org.elastos.did.util.HDKey;
 import org.elastos.did.util.JsonHelper;
 
 import com.fasterxml.jackson.core.JsonFactory;
@@ -524,6 +530,46 @@ public class DIDDocument {
 		throw new IllegalStateException("DID Document internal error.");
 	}
 
+	public KeyPair getKeyPair(DIDURL id) throws InvalidKeyException {
+		if (id == null)
+			throw new IllegalArgumentException();
+
+		if (!hasPublicKey(id))
+			throw new InvalidKeyException("Key no exist");
+
+		return DerivedKey.getKeyPair(getPublicKey(id).getPublicKeyBytes(), null);
+	}
+
+	public KeyPair getKeyPair(String id) throws InvalidKeyException {
+		DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+		return getKeyPair(_id);
+	}
+
+	private KeyPair getKeyPair(DIDURL id, String storepass)
+			throws InvalidKeyException, DIDStoreException {
+		if (id == null || storepass == null || storepass.isEmpty())
+			throw new IllegalArgumentException();
+
+		if (!hasPublicKey(id))
+			throw new InvalidKeyException("Key no exist");
+
+		if (!getMeta().attachedStore())
+			throw new DIDStoreException("Not attached with DID store.");
+
+		if (!getMeta().getStore().containsPrivateKey(getSubject(), id))
+			throw new InvalidKeyException("Don't have private key");
+
+		return DerivedKey.getKeyPair(getPublicKey(id).getPublicKeyBytes(),
+				getMeta().getStore().loadPrivateKey(getSubject(), id, storepass));
+	}
+
+	@SuppressWarnings("unused")
+	private KeyPair getKeyPair(String id, String storepass)
+			throws InvalidKeyException, DIDStoreException {
+		DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+		return getKeyPair(_id, storepass);
+	}
+
 	protected void addPublicKey(PublicKey pk) {
 		if (publicKeys == null) {
 			publicKeys = new TreeMap<DIDURL, PublicKey>();
@@ -867,11 +913,14 @@ public class DIDDocument {
 
 	protected void setMeta(DIDMeta meta) {
 		this.meta = meta;
+		subject.setMeta(meta);
 	}
 
 	protected DIDMeta getMeta() {
-		if (meta == null)
+		if (meta == null) {
 			meta = new DIDMeta();
+			subject.setMeta(meta);
+		}
 
 		return meta;
 	}
@@ -966,7 +1015,8 @@ public class DIDDocument {
 
 	public String sign(String id, String storepass, byte[] ... data)
 			throws DIDStoreException {
-		return sign(new DIDURL(getSubject(), id), storepass, data);
+		DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+		return sign(_id, storepass, data);
 	}
 
 	public boolean verify(String signature, byte[] ... data) {
@@ -975,7 +1025,8 @@ public class DIDDocument {
 	}
 
 	public boolean verify(String id, String signature, byte[] ... data) {
-		return verify(new DIDURL(getSubject(), id), signature, data);
+		DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+		return verify(_id, signature, data);
 	}
 
 	public boolean verify(DIDURL id, String signature, byte[] ... data) {
@@ -1379,6 +1430,48 @@ public class DIDDocument {
 		return toString(false);
 	}
 
+	public JwtBuilder jwtBuilder() {
+		return new JwtBuilder(new KeyProvider() {
+
+			@Override
+			public java.security.PublicKey getPublicKey(String id)
+					throws InvalidKeyException {
+				DIDURL _id = id == null ? getDefaultPublicKey() :
+					new DIDURL(getSubject(), id);
+
+				return getKeyPair(_id).getPublic();
+			}
+
+			@Override
+			public PrivateKey getPrivateKey(String id, String storepass)
+					throws InvalidKeyException, DIDStoreException {
+				DIDURL _id = id == null ? getDefaultPublicKey() :
+					new DIDURL(getSubject(), id);
+
+				return getKeyPair(_id, storepass).getPrivate();
+			}
+		});
+	}
+
+	public JwtParserBuilder jwtParserBuilder() {
+		return new JwtParserBuilder(new KeyProvider() {
+
+			@Override
+			public java.security.PublicKey getPublicKey(String id)
+					throws InvalidKeyException {
+				DIDURL _id = id == null ? getDefaultPublicKey() :
+					new DIDURL(getSubject(), id);
+
+				return getKeyPair(_id).getPublic();
+			}
+
+			@Override
+			public PrivateKey getPrivateKey(String id, String storepass) {
+				return null;
+			}
+		});
+	}
+
 	public static class Builder {
 		private DIDDocument document;
 
@@ -1423,7 +1516,8 @@ public class DIDDocument {
 				throw new IllegalArgumentException();
 			}
 
-			return addPublicKey(new DIDURL(getSubject(), id), _controller, pk);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addPublicKey(_id, _controller, pk);
 		}
 
 		public Builder removePublicKey(DIDURL id, boolean force) {
@@ -1439,7 +1533,8 @@ public class DIDDocument {
 		}
 
 		public Builder removePublicKey(String id, boolean force) {
-			return removePublicKey(new DIDURL(getSubject(), id), force);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return removePublicKey(_id, force);
 		}
 
 		public Builder removePublicKey(DIDURL id) {
@@ -1463,7 +1558,8 @@ public class DIDDocument {
 		}
 
 		public Builder addAuthenticationKey(String id) {
-			return addAuthenticationKey(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addAuthenticationKey(_id);
 		}
 
 		public Builder addAuthenticationKey(DIDURL id, String pk) {
@@ -1484,7 +1580,8 @@ public class DIDDocument {
 		}
 
 		public Builder addAuthenticationKey(String id, String pk) {
-			return addAuthenticationKey(new DIDURL(getSubject(), id), pk);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addAuthenticationKey(_id, pk);
 		}
 
 		public Builder removeAuthenticationKey(DIDURL id) {
@@ -1500,7 +1597,8 @@ public class DIDDocument {
 		}
 
 		public Builder removeAuthenticationKey(String id) {
-			return removeAuthenticationKey(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return removeAuthenticationKey(_id);
 		}
 
 		public Builder addAuthorizationKey(DIDURL id) {
@@ -1516,7 +1614,8 @@ public class DIDDocument {
 		}
 
 		public Builder addAuthorizationKey(String id) {
-			return addAuthorizationKey(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addAuthorizationKey(_id);
 		}
 
 		public Builder addAuthorizationKey(DIDURL id, DID controller, String pk) {
@@ -1548,8 +1647,8 @@ public class DIDDocument {
 				throw new IllegalArgumentException();
 			}
 
-			return addAuthorizationKey(new DIDURL(getSubject(), id),
-					_controller, pk);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addAuthorizationKey(_id, _controller, pk);
 		}
 
 		public Builder authorizationDid(DIDURL id, DID controller, DIDURL key)
@@ -1598,10 +1697,9 @@ public class DIDDocument {
 				throw new IllegalArgumentException(e);
 			}
 
-			DIDURL keyid = key == null ? null : new DIDURL(controllerId, key);
-
-			return authorizationDid(new DIDURL(getSubject(), id),
-					controllerId, keyid);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			DIDURL _key = key == null ? null : new DIDURL(controllerId, key);
+			return authorizationDid(_id, controllerId, _key);
 		}
 
 		public Builder authorizationDid(String id, String controller)
@@ -1622,7 +1720,8 @@ public class DIDDocument {
 		}
 
 		public Builder removeAuthorizationKey(String id) {
-			return removeAuthorizationKey(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return removeAuthorizationKey(_id);
 		}
 
 		public Builder addCredential(VerifiableCredential vc) {
@@ -1635,6 +1734,236 @@ public class DIDDocument {
 			document.addCredential(vc);
 
 			return this;
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				Map<String, String> subject, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			if (document == null)
+				throw new IllegalStateException("Document already sealed.");
+
+			if (id == null || subject == null || subject.isEmpty() ||
+					storepass == null || storepass.isEmpty())
+				throw new IllegalArgumentException();
+
+			Issuer issuer = new Issuer(document);
+			Issuer.CredentialBuilder cb = issuer.issueFor(document.getSubject());
+			if (types == null)
+				types = new String[]{ "SelfProclaimedCredential" };
+
+			if (expirationDate == null)
+				expirationDate = document.getExpires();
+
+			try {
+				VerifiableCredential vc = cb.id(id)
+						.type(types)
+						.properties(subject)
+						.expirationDate(expirationDate)
+						.seal(storepass);
+
+				document.addCredential(vc);
+			} catch (MalformedCredentialException ignore) {
+			}
+
+			return this;
+		}
+
+		public Builder addCredential(String id, String[] types,
+				Map<String, String> subject, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, subject, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, Map<String, String> subject,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, subject, expirationDate, storepass);
+		}
+
+		public Builder addCredential(String id, Map<String, String> subject,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, subject, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				Map<String,String> subject, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, types, subject, null, storepass);
+		}
+
+		public Builder addCredential(String id, String[] types,
+				Map<String, String> subject, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, subject, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, Map<String, String> subject,
+				String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, subject, null, storepass);
+		}
+
+		public Builder addCredential(String id, Map<String, String> subject,
+				String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, subject, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				String json, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			if (document == null)
+				throw new IllegalStateException("Document already sealed.");
+
+			if (id == null || json == null || json.isEmpty() ||
+					storepass == null || storepass.isEmpty())
+				throw new IllegalArgumentException();
+
+			Issuer issuer = new Issuer(document);
+			Issuer.CredentialBuilder cb = issuer.issueFor(document.getSubject());
+			if (types == null)
+				types = new String[]{ "SelfProclaimedCredential" };
+
+			if (expirationDate == null)
+				expirationDate = document.expires;
+
+			try {
+				VerifiableCredential vc = cb.id(id)
+						.type(types)
+						.properties(json)
+						.expirationDate(expirationDate)
+						.seal(storepass);
+
+				document.addCredential(vc);
+			} catch (MalformedCredentialException ignore) {
+			}
+
+			return this;
+		}
+
+		public Builder addCredential(String id, String[] types,
+				String json, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, json, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String json,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, json, expirationDate, storepass);
+		}
+
+		public Builder addCredential(String id, String json,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, json, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				String json, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, types, json, null, storepass);
+		}
+
+		public Builder addCredential(String id, String[] types,
+				String json, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, json, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String json, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, json, null, storepass);
+		}
+
+		public Builder addCredential(String id, String json, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, json, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				JsonNode node, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			if (document == null)
+				throw new IllegalStateException("Document already sealed.");
+
+			if (id == null || node == null || node.size() == 0 ||
+					storepass == null || storepass.isEmpty())
+				throw new IllegalArgumentException();
+
+			Issuer issuer = new Issuer(document);
+			Issuer.CredentialBuilder cb = issuer.issueFor(document.getSubject());
+			if (types == null)
+				types = new String[]{ "SelfProclaimedCredential" };
+
+			if (expirationDate == null)
+				expirationDate = document.expires;
+
+			try {
+				VerifiableCredential vc = cb.id(id)
+						.type(types)
+						.properties(node)
+						.expirationDate(expirationDate)
+						.seal(storepass);
+
+				document.addCredential(vc);
+			} catch (MalformedCredentialException ignore) {
+			}
+
+			return this;
+		}
+
+		public Builder addCredential(String id, String[] types,
+				JsonNode node, Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, node, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, JsonNode node,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, node, expirationDate, storepass);
+		}
+
+		public Builder addCredential(String id, JsonNode node,
+				Date expirationDate, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, node, expirationDate, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, String[] types,
+				JsonNode node, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, types, node, null, storepass);
+		}
+
+		public Builder addCredential(String id, String[] types,
+				JsonNode node, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, types, node, storepass);
+		}
+
+		public Builder addCredential(DIDURL id, JsonNode node, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			return addCredential(id, null, node, null, storepass);
+		}
+
+		public Builder addCredential(String id, JsonNode node, String storepass)
+				throws DIDStoreException, InvalidKeyException {
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addCredential(_id, node, storepass);
 		}
 
 		public Builder removeCredential(DIDURL id) {
@@ -1650,7 +1979,8 @@ public class DIDDocument {
 		}
 
 		public Builder removeCredential(String id) {
-			return removeCredential(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return removeCredential(_id);
 		}
 
 		public Builder addService(DIDURL id, String type, String endpoint) {
@@ -1668,7 +1998,8 @@ public class DIDDocument {
 		}
 
 		public Builder addService(String id, String type, String endpoint) {
-			return addService(new DIDURL(getSubject(), id), type, endpoint);
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return addService(_id, type, endpoint);
 		}
 
 		public Builder removeService(DIDURL id) {
@@ -1684,7 +2015,8 @@ public class DIDDocument {
 		}
 
 		public Builder removeService(String id) {
-			return removeService(new DIDURL(getSubject(), id));
+			DIDURL _id = id == null ? null : new DIDURL(getSubject(), id);
+			return removeService(_id);
 		}
 
 		private Calendar getMaxExpires() {

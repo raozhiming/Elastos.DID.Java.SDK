@@ -289,17 +289,36 @@ public class VerifiableCredential extends DIDObject {
 		this.issuanceDate = issuanceDate;
 	}
 
+	protected boolean hasExpirationDate() {
+		return expirationDate != null;
+	}
+
 	public Date getExpirationDate() {
-		return expirationDate;
+		if (expirationDate != null)
+			return expirationDate;
+		else {
+			try {
+				DIDDocument controllerDoc = subject.id.resolve();
+				if (controllerDoc != null)
+					return controllerDoc.getExpires();
+			} catch (DIDBackendException e) {
+				return null;
+			}
+
+			return null;
+		}
 	}
 
 	protected void setMeta(CredentialMeta meta) {
 		this.meta = meta;
+		this.getId().setMeta(meta);
 	}
 
 	protected CredentialMeta getMeta() {
-		if (meta == null)
+		if (meta == null) {
 			meta = new CredentialMeta();
+			this.getId().setMeta(meta);
+		}
 
 		return meta;
 	}
@@ -493,6 +512,17 @@ public class VerifiableCredential extends DIDObject {
 
 	protected void setProof(Proof proof) {
 		this.proof = proof;
+	}
+
+	protected void completeCheck() throws MalformedCredentialException {
+		if (getId() == null) // TODO:
+			throw new MalformedCredentialException("Missing id.");
+
+		if (getTypes() == null) // TODO:
+			throw new MalformedCredentialException("Missing types.");
+
+		if (subject == null || subject.id == null)
+			throw new MalformedCredentialException("Missing subject.");
 	}
 
 	private void parse(Reader reader) throws MalformedCredentialException {

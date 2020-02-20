@@ -34,11 +34,10 @@ import java.nio.charset.Charset;
 import java.util.Random;
 
 import org.elastos.did.backend.IDChainRequest;
-import org.elastos.did.backend.IDTransactionInfo;
+import org.elastos.did.backend.IDChainTransaction;
 import org.elastos.did.backend.ResolveResult;
 import org.elastos.did.backend.ResolverCache;
 import org.elastos.did.exception.DIDDeactivatedException;
-import org.elastos.did.exception.DIDExpiredException;
 import org.elastos.did.exception.DIDResolveException;
 import org.elastos.did.exception.DIDStoreException;
 import org.elastos.did.exception.DIDTransactionException;
@@ -46,6 +45,8 @@ import org.elastos.did.exception.InvalidKeyException;
 import org.elastos.did.exception.MalformedResolveResultException;
 import org.elastos.did.exception.NetworkException;
 import org.elastos.did.meta.DIDMeta;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -68,6 +69,8 @@ public class DIDBackend {
 	private static long ttl = DEFAULT_TTL; // milliseconds
 
 	private DIDAdapter adapter;
+
+	private static final Logger log = LoggerFactory.getLogger(DIDBackend.class);
 
 	class TransactionResult {
 		private String txid;
@@ -108,10 +111,25 @@ public class DIDBackend {
 		public boolean isEmpty() {
 			return !filled;
 		}
+
+		@Override
+		public String toString() {
+			StringBuilder sb = new StringBuilder(256);
+
+			sb.append("txid: ").append(txid).append(", ")
+				.append("status: ").append(status);
+
+			if (status != 0)
+				sb.append(", ").append("message: ").append(message);
+
+			return sb.toString();
+		}
 	}
 
 	static class DefaultResolver implements DIDResolver {
 		private URL url;
+
+		private static final Logger log = LoggerFactory.getLogger(DefaultResolver.class);
 
 		public DefaultResolver(String resolver) throws DIDResolveException {
 			if (resolver == null || resolver.isEmpty())
@@ -128,6 +146,8 @@ public class DIDBackend {
 		public InputStream resolve(String requestId, String did, boolean all)
 				throws DIDResolveException {
 			try {
+				log.debug("Resolving {}...", did.toString());
+
 				HttpURLConnection connection = (HttpURLConnection)url.openConnection();
 				connection.setRequestMethod("POST");
 				connection.setRequestProperty("User-Agent",
@@ -153,11 +173,15 @@ public class DIDBackend {
 				os.close();
 
 				int code = connection.getResponseCode();
-				if (code != 200)
-					return null;
+				if (code != 200) {
+					log.error("Resolve {} error, status: {}, message: {}",
+							did.toString(), code, connection.getResponseMessage());
+					throw new DIDResolveException("HTTP error with status: " + code);
+				}
 
 				return connection.getInputStream();
 			} catch (IOException e) {
+				log.error("Resovle " + did + " error", e);
 				throw new NetworkException("Network error.", e);
 			}
 		}
@@ -228,16 +252,14 @@ public class DIDBackend {
 		return sb.toString();
 	}
 
-	private static ResolveResult resolveFromBackend(DID did)
+	private static ResolveResult resolveFromBackend(DID did, boolean all)
 			throws DIDResolveException {
 		String requestId = generateRequestId();
 
 		if (resolver == null)
 			throw new DIDResolveException("DID resolver not initialized.");
 
-		InputStream is = resolver.resolve(requestId, did.toString(), false);
-		if (is == null)
-			throw new DIDResolveException("Unknown error.");
+		InputStream is = resolver.resolve(requestId, did.toString(), all);
 
 		ObjectMapper mapper = new ObjectMapper();
 		JsonNode node = null;
@@ -276,19 +298,34 @@ public class DIDBackend {
 		return rr;
 	}
 
+	protected static DIDHistory resolveHistory(DID did) throws DIDResolveException {
+		log.info("Resolving {}...", did.toString());
+
+		ResolveResult rr = resolveFromBackend(did, true);
+		if (rr.getStatus() == ResolveResult.STATUS_NOT_FOUND)
+			return null;
+
+		return rr;
+	}
+
 	protected static DIDDocument resolve(DID did, boolean force)
 			throws DIDResolveException {
+		log.info("Resolving {}...", did.toString());
 
 		ResolveResult rr = null;
-		if (!force)
+		if (!force) {
 			rr = ResolverCache.load(did, ttl);
+			log.debug("Try load {} from resolver cache: {}.",
+					did.toString(), rr == null ? "non" : "matched");
+		}
 
 		if (rr == null)
-			rr = resolveFromBackend(did);
+			rr = resolveFromBackend(did, false);
 
 		switch (rr.getStatus()) {
-		case ResolveResult.STATUS_EXPIRED:
-			throw new DIDExpiredException();
+		// When DID expired, we should also return the document.
+		// case ResolveResult.STATUS_EXPIRED:
+		// 	throw new DIDExpiredException();
 
 		case ResolveResult.STATUS_DEACTIVATED:
 			throw new DIDDeactivatedException();
@@ -297,7 +334,7 @@ public class DIDBackend {
 			return null;
 
 		default:
-			IDTransactionInfo ti = rr.getTransactionInfo(0);
+			IDChainTransaction ti = rr.getTransactionInfo(0);
 			DIDDocument doc = ti.getRequest().getDocument();
 			DIDMeta meta = new DIDMeta();
 			meta.setTransactionId(ti.getTransactionId());
@@ -320,6 +357,10 @@ public class DIDBackend {
 			throws DIDTransactionException {
 		TransactionResult tr = new TransactionResult();
 
+		log.info("Create ID transaction...");
+		log.trace("Transaction paload: '{}', memo: {}, confirms: {}",
+				payload, memo, confirms);
+
 		adapter.createIdTransaction(payload, memo, confirms,
 				(txid, status, message) -> {
 					tr.update(txid, status, message);
@@ -334,6 +375,8 @@ public class DIDBackend {
 				}
 			}
 		}
+
+		log.info("ID transaction complete. {}", tr.toString());
 
 		if (tr.getStatus() != 0)
 			throw new DIDTransactionException(

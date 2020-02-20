@@ -47,8 +47,14 @@ import java.util.zip.ZipOutputStream;
 
 import org.elastos.did.DIDDocument.PublicKey;
 import org.elastos.did.DIDStorage.ReEncryptor;
+import org.elastos.did.crypto.Aes256cbc;
+import org.elastos.did.crypto.Base58;
+import org.elastos.did.crypto.Base64;
+import org.elastos.did.crypto.EcdsaSigner;
+import org.elastos.did.crypto.HDKey;
 import org.elastos.did.exception.DIDBackendException;
 import org.elastos.did.exception.DIDDeactivatedException;
+import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDExpiredException;
 import org.elastos.did.exception.DIDNotFoundException;
 import org.elastos.did.exception.DIDStoreException;
@@ -59,13 +65,10 @@ import org.elastos.did.exception.MalformedDocumentException;
 import org.elastos.did.exception.WrongPasswordException;
 import org.elastos.did.meta.CredentialMeta;
 import org.elastos.did.meta.DIDMeta;
-import org.elastos.did.util.Aes256cbc;
-import org.elastos.did.util.Base58;
-import org.elastos.did.util.Base64;
-import org.elastos.did.util.EcdsaSigner;
-import org.elastos.did.util.HDKey;
 import org.elastos.did.util.JsonHelper;
 import org.elastos.did.util.LRUCache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongycastle.crypto.CryptoException;
 import org.spongycastle.crypto.digests.SHA256Digest;
 
@@ -90,6 +93,8 @@ public final class DIDStore {
 
 	private DIDStorage storage;
 	private DIDBackend backend;
+
+	private static final Logger log = LoggerFactory.getLogger(DIDStore.class);
 
 	public interface ConflictHandle {
 		DIDDocument merge(DIDDocument chainCopy, DIDDocument localCopy);
@@ -156,14 +161,22 @@ public final class DIDStore {
 	}
 
 	// Initialize & create new private identity and save it to DIDStore.
-	public void initPrivateIdentity(int language, String mnemonic,
+	public void initPrivateIdentity(String language, String mnemonic,
 			String passphrase, String storepass, boolean force)
 			throws DIDStoreException {
-		if (mnemonic == null || !Mnemonic.isValid(language, mnemonic))
+		if (mnemonic == null)
 			throw new IllegalArgumentException("Invalid mnemonic.");
 
 		if (storepass == null || storepass.isEmpty())
 			throw new IllegalArgumentException("Invalid password.");
+
+		try {
+			Mnemonic mc = Mnemonic.getInstance(language);
+			if (!mc.isValid(mnemonic))
+				throw new IllegalArgumentException("Invalid mnemonic.");
+		} catch (DIDException e) {
+			throw new IllegalArgumentException(e);
+		}
 
 		if (containsPrivateIdentity() && !force)
 			throw new DIDStoreException("Already has private indentity.");
@@ -182,7 +195,7 @@ public final class DIDStore {
 
 	}
 
-	public void initPrivateIdentity(int language, String mnemonic,
+	public void initPrivateIdentity(String language, String mnemonic,
 			String passphrase, String storepass) throws DIDStoreException {
 		initPrivateIdentity(language, mnemonic, passphrase, storepass, false);
 	}
@@ -214,6 +227,9 @@ public final class DIDStore {
 				privateIdentity.serialize(), storepass);
 		storage.storePrivateIdentity(encryptedIdentity);
 
+		// Save pre-derived public key
+		storage.storePublicIdentity(privateIdentity.serializePrederivedPubBase58());
+
 		// Save index
 		storage.storePrivateIdentityIndex(0);
 
@@ -224,8 +240,12 @@ public final class DIDStore {
 		if (storepass == null || storepass.isEmpty())
 			throw new IllegalArgumentException("Invalid password.");
 
-		String encryptedMnemonic = storage.loadMnemonic();
-		return new String(decryptFromBase64(encryptedMnemonic, storepass));
+		if (storage.containsMnemonic()) {
+			String encryptedMnemonic = storage.loadMnemonic();
+			return new String(decryptFromBase64(encryptedMnemonic, storepass));
+		} else {
+			throw new DIDStoreException("DID store doesn't contain mnemonic.");
+		}
 	}
 
 	// initialized from saved private identity from DIDStore.
@@ -238,9 +258,10 @@ public final class DIDStore {
 
 		byte[] keyData = decryptFromBase64(storage.loadPrivateIdentity(), storepass);
 		if (keyData.length == HDKey.SEED_BYTES) {
+			// For backward compatible, convert to extended root private key
+			// TODO: Should be remove in the future
 			privateIdentity = HDKey.fromSeed(keyData);
 
-			// convert to extended root private key
 			String encryptedIdentity = encryptToBase64(
 					privateIdentity.serialize(), storepass);
 			storage.storePrivateIdentity(encryptedIdentity);
@@ -252,7 +273,22 @@ public final class DIDStore {
 
 		Arrays.fill(keyData, (byte)0);
 
+		// For backward compatible, create pre-derived public key if not exist.
+		// TODO: Should be remove in the future
+		if (!storage.containsPublicIdentity())
+			storage.storePublicIdentity(privateIdentity.serializePrederivedPubBase58());
+
 		return privateIdentity;
+	}
+
+	protected HDKey loadPublicIdentity() throws DIDStoreException {
+		if (!containsPrivateIdentity())
+			return null;
+
+		String keyData = storage.loadPublicIdentity();
+		HDKey publicIdentity = HDKey.deserializeBase58(keyData);
+
+		return publicIdentity;
 	}
 
 	public void synchronize(ConflictHandle handle, String storepass)
@@ -273,15 +309,22 @@ public final class DIDStore {
 				HDKey.DerivedKey key = privateIdentity.derive(i++);
 				DID did = new DID(DID.METHOD, key.getAddress());
 
+				log.info("Synchronize {}/{}...", did.toString(), i);
+
 				try {
 					DIDDocument chainCopy = null;
 					try {
 						chainCopy = DIDBackend.resolve(did, true);
 					} catch (DIDExpiredException | DIDDeactivatedException e) {
+						log.debug("{} is {}, skip.", did.toString(),
+								e instanceof DIDExpiredException ?
+								"expired" : "deactivated");
 						continue;
 					}
 
 					if (chainCopy != null) {
+						log.debug("{} exists, got the on-chain copy.", did.toString());
+
 						DIDDocument finalCopy = chainCopy;
 
 						DIDDocument localCopy = loadDid(did);
@@ -289,11 +332,17 @@ public final class DIDStore {
 							if (localCopy.getMeta().getSignature() == null ||
 									!localCopy.getProof().getSignature().equals(
 									localCopy.getMeta().getSignature())) {
+								log.debug("{} on-chain copy conflict with local copy.",
+										did.toString());
+
 								// Local copy was modified
 								finalCopy = handle.merge(chainCopy, localCopy);
-
-								if (finalCopy == null || !finalCopy.getSubject().equals(did))
+								if (finalCopy == null || !finalCopy.getSubject().equals(did)) {
+									log.error("Conflict handle merge the DIDDocument error.");
 									throw new DIDStoreException("deal with local modification error.");
+								} else {
+									log.debug("Conflict handle return the final copy.");
+								}
 							}
 						}
 
@@ -308,6 +357,8 @@ public final class DIDStore {
 
 						blanks = 0;
 					} else {
+						log.debug("{} not exists.", did.toString());
+
 						if (i >= nextIndex)
 							blanks++;
 					}
@@ -345,31 +396,32 @@ public final class DIDStore {
 		return synchronizeAsync((c, l) -> l, storepass);
 	}
 
-	public DIDDocument newDid(String alias, String storepass)
+	public DIDDocument newDid(int index, String alias, String storepass)
 			throws DIDStoreException {
-		if (storepass == null || storepass.isEmpty())
-			throw new IllegalArgumentException("Invalid password.");
+		if (index < 0 || storepass == null || storepass.isEmpty())
+			throw new IllegalArgumentException();
 
-		int nextIndex = storage.loadPrivateIdentityIndex();
 		HDKey privateIdentity = loadPrivateIdentity(storepass);
 		if (privateIdentity == null)
 			throw new DIDStoreException("DID Store not contains private identity.");
 
-		HDKey.DerivedKey key = privateIdentity.derive(nextIndex++);
+		HDKey.DerivedKey key = privateIdentity.derive(index);
 		try {
 			DID did = new DID(DID.METHOD, key.getAddress());
-			DIDURL id = new DIDURL(did, "primary");
+			log.info("Creating new DID {} with index {}...", did.toString(), index);
 
+			DIDDocument doc = loadDid(did);
+			if (doc != null)
+				throw new DIDStoreException("DID already exists.");
+
+			DIDURL id = new DIDURL(did, "primary");
 			storePrivateKey(did, id, key.serialize(), storepass);
 
 			DIDDocument.Builder db = new DIDDocument.Builder(did, this);
 			db.addAuthenticationKey(id, key.getPublicKeyBase58());
-			DIDDocument doc = db.seal(storepass);
+			doc = db.seal(storepass);
 			doc.getMeta().setAlias(alias);
 			storeDid(doc);
-
-			storage.storePrivateIdentityIndex(nextIndex);
-
 			return doc;
 		} finally {
 			privateIdentity.wipe();
@@ -377,8 +429,33 @@ public final class DIDStore {
 		}
 	}
 
+	public DIDDocument newDid(int index, String storepass) throws DIDStoreException {
+		return newDid(index, null, storepass);
+	}
+
+	public DIDDocument newDid(String alias, String storepass)
+			throws DIDStoreException {
+		int nextIndex = storage.loadPrivateIdentityIndex();
+		DIDDocument doc = newDid(nextIndex++, alias, storepass);
+		storage.storePrivateIdentityIndex(nextIndex);
+		return doc;
+	}
+
 	public DIDDocument newDid(String storepass) throws DIDStoreException {
 		return newDid(null, storepass);
+	}
+
+	public DID getDid(int index) throws DIDStoreException {
+		if (index < 0)
+			throw new IllegalArgumentException();
+
+		HDKey publicIdentity = loadPublicIdentity();
+		if (publicIdentity == null)
+			throw new DIDStoreException("DID Store not contains private identity.");
+
+		HDKey.DerivedKey key = publicIdentity.derive(index);
+		DID did = new DID(DID.METHOD, key.getAddress());
+		return did;
 	}
 
 	public String publishDid(DID did, int confirms,
@@ -387,18 +464,32 @@ public final class DIDStore {
 		if (did == null || storepass == null || storepass.isEmpty())
 			throw new IllegalArgumentException();
 
-		DIDDocument doc = loadDid(did);
-		if (doc == null)
-			throw new DIDStoreException("Can not find the document for " + did);
+		log.info("Publishing {}{}...", did.toString(),
+				force ? " in force mode" : "");
 
-		if (doc.isDeactivated())
+		DIDDocument doc = loadDid(did);
+		if (doc == null) {
+			log.error("No document for {}", did.toString());
+			throw new DIDStoreException("Can not find the document for " + did);
+		}
+
+		if (doc.isDeactivated()) {
+			log.error("{} already deactivated.", did.toString());
 			throw new DIDStoreException("DID already deactivated.");
+		}
+
+		if (doc.isExpired() && !force) {
+			log.error("{} already expired, use force mode to publish anyway.", did.toString());
+			throw new DIDStoreException("DID already expired.");
+		}
 
 		String lastTxid = null;
 		DIDDocument resolvedDoc = did.resolve();
 		if (resolvedDoc != null) {
-			if (resolvedDoc.isDeactivated())
+			if (resolvedDoc.isDeactivated()) {
+				log.error("{} already deactivated.", did.toString());
 				throw new DIDStoreException("DID already deactivated.");
+			}
 
 			if (!force) {
 				String localTxid = doc.getMeta().getTransactionId();
@@ -407,14 +498,22 @@ public final class DIDStore {
 				String resolvedTxid = resolvedDoc.getTransactionId();
 				String reolvedSignautre = resolvedDoc.getProof().getSignature();
 
-				if (localTxid == null && localSignature == null)
+				if (localTxid == null && localSignature == null) {
+					log.error("Missing last transaction id and signature, " +
+							"DID SDK dosen't know how to handle it, " +
+							"use force mode to ignore checks.");
 					throw new DIDStoreException("DID document not up-to-date");
+				}
 
-				if (localTxid != null && !localTxid.equals(resolvedTxid))
+				if (localTxid != null && !localTxid.isEmpty() && !localTxid.equals(resolvedTxid)) {
+					log.error("Current copy not based on the lastest on-chain copy, txid mismatch.");
 					throw new DIDStoreException("DID document not up-to-date");
+				}
 
-				if (localSignature != null && !localSignature.equals(reolvedSignautre))
+				if (localSignature != null && !localSignature.equals(reolvedSignautre)) {
+					log.error("Current copy not based on the lastest on-chain copy, signature mismatch");
 					throw new DIDStoreException("DID document not up-to-date");
+				}
 			}
 
 			lastTxid = resolvedDoc.getTransactionId();
@@ -423,12 +522,15 @@ public final class DIDStore {
 		if (signKey == null)
 			signKey = doc.getDefaultPublicKey();
 
-		if (lastTxid == null || lastTxid.isEmpty())
+		if (lastTxid == null || lastTxid.isEmpty()) {
+			log.info("Try to publish[create] {}...", did.toString());
 			lastTxid = backend.create(doc, confirms,
 					signKey, storepass);
-		else
+		} else {
+			log.info("Try to publish[update] {}...", did.toString());
 			lastTxid = backend.update(doc, lastTxid, confirms,
 					signKey, storepass);
+		}
 
 		if (lastTxid != null)
 			doc.getMeta().setTransactionId(lastTxid);
@@ -1034,6 +1136,7 @@ public final class DIDStore {
 		if (did == null)
 			throw new IllegalArgumentException();
 
+		didCache.remove(did);
 		return storage.deleteDid(did);
 	}
 
@@ -1232,6 +1335,7 @@ public final class DIDStore {
 		if (did == null || id == null)
 			throw new IllegalArgumentException();
 
+		vcCache.remove(id);
 		return storage.deleteCredential(did, id);
 	}
 
@@ -1330,9 +1434,10 @@ public final class DIDStore {
 		storePrivateKey(_did, _id, privateKey, storepass);
 	}
 
-	protected String loadPrivateKey(DID did, DIDURL id)
+	protected byte[] loadPrivateKey(DID did, DIDURL id, String storepass)
 			throws DIDStoreException {
-		return storage.loadPrivateKey(did, id);
+		String encryptedKey = storage.loadPrivateKey(did, id);
+		return decryptFromBase64(encryptedKey, storepass);
 	}
 
 	public boolean containsPrivateKeys(DID did) throws DIDStoreException {
@@ -1409,7 +1514,7 @@ public final class DIDStore {
 			id = doc.getDefaultPublicKey();
 		}
 
-		byte[] binKey = decryptFromBase64(loadPrivateKey(did, id), storepass);
+		byte[] binKey = loadPrivateKey(did, id, storepass);
 		HDKey.DerivedKey key = HDKey.DerivedKey.deserialize(binKey);
 
 		byte[] sig = EcdsaSigner.sign(key.getPrivateKeyBytes(), data);
@@ -1450,6 +1555,8 @@ public final class DIDStore {
 		DIDDocument doc = storage.loadDid(did);
 		if (doc == null)
 			throw new DIDStoreException("Export DID " + did + " failed, not exist.");
+
+		log.debug("Exporting {}...", did.toString());
 
 		SHA256Digest sha256 = new SHA256Digest();
 		byte[] bytes = password.getBytes();
@@ -1497,6 +1604,8 @@ public final class DIDStore {
 			List<DIDURL> ids = listCredentials(did);
 			Collections.sort(ids);
 			for (DIDURL id : ids) {
+				log.debug("Exporting credential {}...", id.toString());
+
 				VerifiableCredential vc = storage.loadCredential(did, id);
 
 				vc.toJson(generator, false);
@@ -1522,6 +1631,8 @@ public final class DIDStore {
 				DIDURL id = pk.getId();
 
 				if (storage.containsPrivateKey(did, id)) {
+					log.debug("Exporting private key {}...", id.toString());
+
 					String csk = storage.loadPrivateKey(did, id);
 					byte[] sk = decryptFromBase64(csk, storepass);
 					csk = encryptToBase64(sk, password);
@@ -1707,6 +1818,8 @@ public final class DIDStore {
 		bytes = did.toString().getBytes();
 		sha256.update(bytes, 0, bytes.length);
 
+		log.debug("Importing {}...", did.toString());
+
 		// Created
 		Date created = JsonHelper.getDate(root, "created", true, null,
 				"export date", exceptionClass);
@@ -1715,29 +1828,35 @@ public final class DIDStore {
 
 		// Document
 		JsonNode node = root.get("document");
-		if (node == null)
+		if (node == null) {
+			log.error("Missing DID document.");
 			throw new DIDStoreException("Missing DID document in the export data");
+		}
 
 		DIDDocument doc = null;
 		try {
 			doc = DIDDocument.fromJson(node);
 		} catch (MalformedDocumentException e) {
+			log.error("Parse DID document error.", e);
 			throw new DIDStoreException("Invalid export data.", e);
 		}
 
-		if (!doc.getSubject().equals(did) || !doc.isGenuine())
+		if (!doc.getSubject().equals(did) || !doc.isGenuine()) {
+			log.error("DID Document not blongs to {}", did.toString());
 			throw new DIDStoreException("Invalid DID document in the export data.");
+		}
 
 		bytes = doc.toString(true).getBytes();
 		sha256.update(bytes, 0, bytes.length);
-
 
 		// Credential
 		HashMap<DIDURL, VerifiableCredential> vcs = null;
 		node = root.get("credential");
 		if (node != null) {
-			if (!node.isArray())
+			if (!node.isArray()) {
+				log.error("Credential should be an array.");
 				throw new DIDStoreException("Invalid export data, wrong credential data.");
+			}
 
 			vcs = new HashMap<DIDURL, VerifiableCredential>(node.size());
 
@@ -1747,11 +1866,14 @@ public final class DIDStore {
 				try {
 					vc = VerifiableCredential.fromJson(node.get(i), did);
 				} catch (MalformedCredentialException e) {
+					log.error("Parse credential " + i + " error", e);
 					throw new DIDStoreException("Invalid export data.", e);
 				}
 
-				if (!vc.getSubject().getId().equals(did) /* || !vc.isGenuine() */)
+				if (!vc.getSubject().getId().equals(did) /* || !vc.isGenuine() */) {
+					log.error("Credential {} not blongs to {}", i, did.toString());
 					throw new DIDStoreException("Invalid credential in the export data.");
+				}
 
 				bytes = vc.toString(true).getBytes();
 				sha256.update(bytes, 0, bytes.length);
@@ -1764,8 +1886,10 @@ public final class DIDStore {
 		HashMap<DIDURL, String> sks = null;
 		node = root.get("privatekey");
 		if (node != null) {
-			if (!node.isArray())
+			if (!node.isArray()) {
+				log.error("Privatekey should be an array.");
 				throw new DIDStoreException("Invalid export data, wrong privatekey data.");
+			}
 
 			sks = new HashMap<DIDURL, String>(node.size());
 
@@ -1803,8 +1927,10 @@ public final class DIDStore {
 
 			metaNode = node.get("credential");
 			if (metaNode != null) {
-				if (!metaNode.isArray())
+				if (!metaNode.isArray()) {
+					log.error("Credential's metadata should be an array.");
 					throw new DIDStoreException("Invalid export data, wrong metadata.");
+				}
 
 				for (int i = 0; i < metaNode.size(); i++) {
 					JsonNode n = metaNode.get(i);
@@ -1830,8 +1956,10 @@ public final class DIDStore {
 
 		// Fingerprint
 		node = root.get("fingerprint");
-		if (node == null)
+		if (node == null) {
+			log.error("Missing fingerprint");
 			throw new DIDStoreException("Missing fingerprint in the export data");
+		}
 		String refFingerprint = node.asText();
 
 		byte digest[] = new byte[32];
@@ -1839,22 +1967,27 @@ public final class DIDStore {
 		String fingerprint = Base64.encodeToString(digest,
 				Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
 
-		if (!fingerprint.equals(refFingerprint))
+		if (!fingerprint.equals(refFingerprint)) {
+			log.error("Fingerprint mismatch.");
 			throw new DIDStoreException("Invalid export data, the fingerprint mismatch.");
+		}
 
 		// Save
 		//
 		// All objects should load directly from storage,
 		// avoid affects the cached objects.
+		log.debug("Importing document...");
 		storage.storeDid(doc);
 		storage.storeDidMeta(doc.getSubject(), doc.getMeta());
 
 		for (VerifiableCredential vc : vcs.values()) {
+			log.debug("Importing credential {}...", vc.getId().toString());
 			storage.storeCredential(vc);
 			storage.storeCredentialMeta(did, vc.getId(), vc.getMeta());
 		}
 
 		for (Map.Entry<DIDURL, String> sk : sks.entrySet()) {
+			log.debug("Importing private key {}...", sk.getKey().toString());
 			storage.storePrivateKey(did, sk.getKey(), sk.getValue());
 		}
 	}
@@ -1906,15 +2039,21 @@ public final class DIDStore {
 
 	private void exportPrivateIdentity(JsonGenerator generator, String password,
 			String storepass) throws DIDStoreException, IOException {
-		String encryptedMnemonic = storage.loadMnemonic();
-		byte[] plain = decryptFromBase64(encryptedMnemonic, storepass);
-		encryptedMnemonic = encryptToBase64(plain, password);
+		String encryptedKey = storage.loadPrivateIdentity();
+		byte[] plain = decryptFromBase64(encryptedKey, storepass);
+		encryptedKey = encryptToBase64(plain, password);
 		Arrays.fill(plain, (byte)0);
 
-		String encryptedSeed = storage.loadPrivateIdentity();
-		plain = decryptFromBase64(encryptedSeed, storepass);
-		encryptedSeed = encryptToBase64(plain, password);
-		Arrays.fill(plain, (byte)0);
+		String encryptedMnemonic = null;
+		if (storage.containsMnemonic()) {
+			encryptedMnemonic = storage.loadMnemonic();
+			plain = decryptFromBase64(encryptedMnemonic, storepass);
+			encryptedMnemonic = encryptToBase64(plain, password);
+			Arrays.fill(plain, (byte)0);
+		}
+
+		String pubKey = storage.containsPublicIdentity() ?
+				storage.loadPublicIdentity() : null;
 
 		int index = storage.loadPrivateIdentityIndex();
 
@@ -1930,14 +2069,23 @@ public final class DIDStore {
 		sha256.update(bytes, 0, bytes.length);
 
 		// Mnemonic
-		generator.writeStringField("mnemonic", encryptedMnemonic);
-		bytes = encryptedMnemonic.getBytes();
-		sha256.update(bytes, 0, bytes.length);
+		if (encryptedMnemonic != null) {
+			generator.writeStringField("mnemonic", encryptedMnemonic);
+			bytes = encryptedMnemonic.getBytes();
+			sha256.update(bytes, 0, bytes.length);
+		}
 
 		// Key
-		generator.writeStringField("key", encryptedSeed);
-		bytes = encryptedSeed.getBytes();
+		generator.writeStringField("key", encryptedKey);
+		bytes = encryptedKey.getBytes();
 		sha256.update(bytes, 0, bytes.length);
+
+		// Key.pub
+		if (pubKey != null) {
+			generator.writeStringField("key.pub", pubKey);
+			bytes = pubKey.getBytes();
+			sha256.update(bytes, 0, bytes.length);
+		}
 
 		// Index
 		generator.writeNumberField("index", index);
@@ -2016,23 +2164,35 @@ public final class DIDStore {
 
 		// Mnemonic
 		String encryptedMnemonic = JsonHelper.getString(root, "mnemonic",
-				false, null, "mnemonic", exceptionClass);
-		bytes = encryptedMnemonic.getBytes();
-		sha256.update(bytes, 0, bytes.length);
+				true, null, "mnemonic", exceptionClass);
+		if (encryptedMnemonic != null) {
+			bytes = encryptedMnemonic.getBytes();
+			sha256.update(bytes, 0, bytes.length);
+		}
 
 		byte[] plain = decryptFromBase64(encryptedMnemonic, password);
 		encryptedMnemonic = encryptToBase64(plain, storepass);
 		Arrays.fill(plain, (byte)0);
 
-		String encryptedSeed = JsonHelper.getString(root, "key",
+		// Key
+		String encryptedKey = JsonHelper.getString(root, "key",
 				false, null, "key", exceptionClass);
-		bytes = encryptedSeed.getBytes();
+		bytes = encryptedKey.getBytes();
 		sha256.update(bytes, 0, bytes.length);
 
-		plain = decryptFromBase64(encryptedSeed, password);
-		encryptedSeed = encryptToBase64(plain, storepass);
+		plain = decryptFromBase64(encryptedKey, password);
+		encryptedKey = encryptToBase64(plain, storepass);
 		Arrays.fill(plain, (byte)0);
 
+		// Key.pub
+		String pubKey = JsonHelper.getString(root, "key.pub",
+				true, null, "publickey", exceptionClass);
+		if (pubKey != null) {
+			bytes = pubKey.getBytes();
+			sha256.update(bytes, 0, bytes.length);
+		}
+
+		// Index
 		JsonNode node = root.get("index");
 		if (node == null || !node.isNumber())
 			throw new DIDStoreException("Invalid export data, unknow index.");
@@ -2055,8 +2215,14 @@ public final class DIDStore {
 			throw new DIDStoreException("Invalid export data, the fingerprint mismatch.");
 
 		// Save
-		storage.storeMnemonic(encryptedMnemonic);
-		storage.storePrivateIdentity(encryptedSeed);
+		if (encryptedMnemonic != null)
+			storage.storeMnemonic(encryptedMnemonic);
+
+		storage.storePrivateIdentity(encryptedKey);
+
+		if (pubKey != null)
+			storage.storePublicIdentity(pubKey);
+
 		storage.storePrivateIdentityIndex(index);
 	}
 

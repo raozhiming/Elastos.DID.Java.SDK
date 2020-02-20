@@ -31,9 +31,9 @@ import java.util.Map;
 
 import org.elastos.did.adapter.SPVAdapter;
 import org.elastos.did.backend.ResolverCache;
+import org.elastos.did.crypto.Base58;
+import org.elastos.did.crypto.HDKey;
 import org.elastos.did.exception.DIDException;
-import org.elastos.did.util.Base58;
-import org.elastos.did.util.HDKey;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,7 +61,7 @@ public class TestDataGenerator {
 		Utils.deleteFile(new File(storeRoot));
 		store = DIDStore.open("filesystem", storeRoot, adapter);
 
-    	String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
+    	String mnemonic =  Mnemonic.getInstance().generate();
     	store.initPrivateIdentity(Mnemonic.ENGLISH, mnemonic,
     			TestConfig.passphrase, TestConfig.storePass, true);
 
@@ -98,8 +98,7 @@ public class TestDataGenerator {
 		store.storeCredential(vc, "Profile");
 
 		DIDURL id = issuer.getDefaultPublicKey();
-		String sk = store.loadPrivateKey(issuer.getSubject(), id);
-		byte[] binSk = DIDStore.decryptFromBase64(sk, TestConfig.storePass);
+		byte[] binSk = store.loadPrivateKey(issuer.getSubject(), id, TestConfig.storePass);
 		writeTo("issuer." + id.getFragment() + ".sk", Base58.encode(binSk));
 
 		String json = issuer.toString(true);
@@ -178,8 +177,7 @@ public class TestDataGenerator {
 		store.storeCredential(vcEmail, "Email");
 
 		DIDURL id = test.getDefaultPublicKey();
-		String sk = store.loadPrivateKey(test.getSubject(), id);
-		byte[] binSk = DIDStore.decryptFromBase64(sk, TestConfig.storePass);
+		byte[] binSk = store.loadPrivateKey(test.getSubject(), id, TestConfig.storePass);
 		writeTo("document." + id.getFragment() + ".sk", Base58.encode(binSk));
 
 		String json = test.toString(true);

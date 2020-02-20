@@ -41,9 +41,17 @@ public interface DIDStorage {
 
 	public String loadPrivateIdentity() throws DIDStorageException;
 
+	public boolean containsPublicIdentity() throws DIDStorageException;
+
+	public void storePublicIdentity(String key) throws DIDStorageException;
+
+	public String loadPublicIdentity() throws DIDStorageException;
+
 	public void storePrivateIdentityIndex(int index) throws DIDStorageException;
 
 	public int loadPrivateIdentityIndex() throws DIDStorageException;
+
+	public boolean containsMnemonic() throws DIDStorageException;
 
 	public void storeMnemonic(String mnemonic) throws DIDStorageException;
 

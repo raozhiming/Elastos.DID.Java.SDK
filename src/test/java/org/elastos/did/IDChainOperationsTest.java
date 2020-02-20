@@ -36,8 +36,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import org.elastos.did.crypto.HDKey;
 import org.elastos.did.exception.DIDException;
-import org.elastos.did.util.HDKey;
 import org.junit.jupiter.api.Test;
 
 //@RunWith(Parameterized.class)
@@ -62,8 +62,10 @@ public class IDChainOperationsTest {
 		DID did = doc.getSubject();
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long start = System.currentTimeMillis();
 		String txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
 
 		testData.waitForWalletAvaliable();
@@ -85,9 +87,11 @@ public class IDChainOperationsTest {
 		DID did = doc.getSubject();
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long start = System.currentTimeMillis();
 		CompletableFuture<String> tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - start + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		String txid = tf.join();
@@ -113,10 +117,12 @@ public class IDChainOperationsTest {
 		DID did = doc.getSubject();
 
 		System.out.print("Publishing new DID and resolve: " + did + "...");
+		long start = System.currentTimeMillis();
 		CompletableFuture<DIDDocument> tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenCompose((tx) -> did.resolveAsync(true));
 		DIDDocument resolved = tf.join();
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		assertEquals(did, resolved.getSubject());
 		assertTrue(resolved.isValid());
@@ -125,6 +131,9 @@ public class IDChainOperationsTest {
 
 	@Test
 	public void testUpdateAndResolve() throws DIDException {
+		String[] txids = new String[3];
+		String[] sigs = new String[3];
+
 		TestData testData = new TestData();
 		DIDStore store = testData.setup(DUMMY_TEST);
 		testData.initIdentity();
@@ -135,9 +144,14 @@ public class IDChainOperationsTest {
 		DID did = doc.getSubject();
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long start = System.currentTimeMillis();
 		String txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
+
+		txids[2] = txid;
+		sigs[2] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		DIDDocument resolved = did.resolve(true);
@@ -158,9 +172,14 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		start = System.currentTimeMillis();
 		txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
+
+		txids[1] = txid;
+		sigs[1] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		resolved = did.resolve(true);
@@ -182,9 +201,14 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		start = System.currentTimeMillis();
 		txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
+
+		txids[0] = txid;
+		sigs[0] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		resolved = did.resolve(true);
@@ -195,10 +219,29 @@ public class IDChainOperationsTest {
 
 		lastTxid = resolved.getTransactionId();
 		System.out.println("Last transaction id: " + lastTxid);
+
+		DIDHistory his = did.resolveHistory();
+		assertNotNull(his);
+		assertEquals(did, his.getDid());
+		assertEquals(DIDHistory.STATUS_VALID, his.getStatus());
+		assertEquals(3, his.getTransactionCount());
+		List<DIDTransaction> txs = his.getAllTransactions();
+		assertNotNull(txs);
+		assertEquals(3, txs.size());
+
+		for (int i = 0; i < txs.size(); i++) {
+			DIDTransaction tx = txs.get(i);
+			assertEquals(did, tx.getDid());
+			assertEquals(txids[i], tx.getTransactionId());
+			assertEquals(sigs[i], tx.getDocument().getProof().getSignature());
+		}
 	}
 
 	@Test
 	public void testUpdateAndResolveAsync() throws DIDException {
+		String[] txids = new String[3];
+		String[] sigs = new String[3];
+
 		TestData testData = new TestData();
 		DIDStore store = testData.setup(DUMMY_TEST);
 		testData.initIdentity();
@@ -209,13 +252,18 @@ public class IDChainOperationsTest {
 		DID did = doc.getSubject();
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long s1 = System.currentTimeMillis();
 		CompletableFuture<String> tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s1 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		String txid = tf.join();
 		assertNotNull(txid);
+
+		txids[2] = txid;
+		sigs[2] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		CompletableFuture<DIDDocument> rf = did.resolveAsync(true);
@@ -237,13 +285,18 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		long s2 = System.currentTimeMillis();
 		tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s2 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		txid = tf.join();
 		assertNotNull(txid);
+
+		txids[1] = txid;
+		sigs[1] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		rf = did.resolveAsync(true);
@@ -266,13 +319,18 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		long s3 = System.currentTimeMillis();
 		tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s3 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		txid = tf.join();
 		assertNotNull(txid);
+
+		txids[0] = txid;
+		sigs[0] = doc.getProof().getSignature();
 
 		testData.waitForWalletAvaliable();
 		rf = did.resolveAsync(true);
@@ -284,6 +342,24 @@ public class IDChainOperationsTest {
 
 		lastTxid = resolved.getTransactionId();
 		System.out.println("Last transaction id: " + lastTxid);
+
+		CompletableFuture<DIDHistory> hf = did.resolveHistoryAsync();
+		DIDHistory his = hf.join();
+		assertNotNull(his);
+		assertEquals(did, his.getDid());
+		assertEquals(DIDHistory.STATUS_VALID, his.getStatus());
+		assertEquals(3, his.getTransactionCount());
+		List<DIDTransaction> txs = his.getAllTransactions();
+		assertNotNull(txs);
+		assertEquals(3, txs.size());
+
+		for (int i = 0; i < txs.size(); i++) {
+			DIDTransaction tx = txs.get(i);
+			assertEquals(did, tx.getDid());
+			assertEquals(txids[i], tx.getTransactionId());
+			assertEquals(sigs[i], tx.getDocument().getProof().getSignature());
+		}
+
 	}
 
 	@Test
@@ -322,8 +398,10 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long start = System.currentTimeMillis();
 		String txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
 
 		testData.waitForWalletAvaliable();
@@ -357,8 +435,10 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		start = System.currentTimeMillis();
 		txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
 
 		testData.waitForWalletAvaliable();
@@ -397,8 +477,10 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		start = System.currentTimeMillis();
 		txid = store.publishDid(did, 1, TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 		assertNotNull(txid);
 
 		testData.waitForWalletAvaliable();
@@ -448,9 +530,11 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Publishing new DID: " + did + "...");
+		long s1 = System.currentTimeMillis();
 		CompletableFuture<String> tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s1 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		String txid = tf.join();
@@ -488,9 +572,11 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		long s2 = System.currentTimeMillis();
 		tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s2 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		txid = tf.join();
@@ -533,9 +619,11 @@ public class IDChainOperationsTest {
 		store.storeDid(doc);
 
 		System.out.print("Updating DID: " + did + "...");
+		long s3 = System.currentTimeMillis();
 		tf = store.publishDidAsync(did, 1, TestConfig.storePass)
 				.thenApply((tx) -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s3 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 					return tx;
 				});
 		txid = tf.join();
@@ -567,8 +655,10 @@ public class IDChainOperationsTest {
 				TestConfig.passphrase, TestConfig.storePass, true);
 
 		System.out.print("Synchronizing from IDChain...");
+		long start = System.currentTimeMillis();
 		store.synchronize(TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		List<DID> dids = store.listDids(DIDStore.DID_HAS_PRIVATEKEY);
 		assertEquals(5, dids.size());
@@ -617,9 +707,11 @@ public class IDChainOperationsTest {
 				TestConfig.passphrase, TestConfig.storePass, true);
 
 		System.out.print("Synchronizing from IDChain...");
+		long start = System.currentTimeMillis();
 		CompletableFuture<Void> f = store.synchronizeAsync(TestConfig.storePass)
 				.thenRun(() -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - start + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 				});
 
 		f.join();
@@ -671,8 +763,10 @@ public class IDChainOperationsTest {
 				TestConfig.passphrase, TestConfig.storePass, true);
 
 		System.out.print("Synchronizing from IDChain...");
+		long start = System.currentTimeMillis();
 		store.synchronize(TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		List<DID> dids = store.listDids(DIDStore.DID_HAS_PRIVATEKEY);
 		assertEquals(5, dids.size());
@@ -715,8 +809,10 @@ public class IDChainOperationsTest {
 		String modifiedSignature = doc.getProof().getSignature();
 
 		System.out.print("Synchronizing again from IDChain...");
+		start = System.currentTimeMillis();
 		store.synchronize(TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		dids = store.listDids(DIDStore.DID_HAS_PRIVATEKEY);
 		assertEquals(5, dids.size());
@@ -767,8 +863,10 @@ public class IDChainOperationsTest {
 				TestConfig.passphrase, TestConfig.storePass, true);
 
 		System.out.print("Synchronizing from IDChain...");
+		long start = System.currentTimeMillis();
 		store.synchronize(TestConfig.storePass);
-		System.out.println("OK");
+		long duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		List<DID> dids = store.listDids(DIDStore.DID_HAS_PRIVATEKEY);
 		assertEquals(5, dids.size());
@@ -813,8 +911,10 @@ public class IDChainOperationsTest {
 		assertNotEquals(originSignature, doc.getProof().getSignature());
 
 		System.out.print("Synchronizing again from IDChain...");
+		start = System.currentTimeMillis();
 		store.synchronize((c, l) -> c, TestConfig.storePass);
-		System.out.println("OK");
+		duration = (System.currentTimeMillis() - start + 500) / 1000;
+		System.out.println("OK(" + duration + "s)");
 
 		dids = store.listDids(DIDStore.DID_HAS_PRIVATEKEY);
 		assertEquals(5, dids.size());
@@ -865,9 +965,11 @@ public class IDChainOperationsTest {
 				TestConfig.passphrase, TestConfig.storePass, true);
 
 		System.out.print("Synchronizing from IDChain...");
+		long s1 = System.currentTimeMillis();
 		CompletableFuture<Void> f = store.synchronizeAsync(TestConfig.storePass)
 				.thenRun(() -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s1 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 				});
 
 		f.join();
@@ -915,9 +1017,11 @@ public class IDChainOperationsTest {
 		assertNotEquals(originSignature, doc.getProof().getSignature());
 
 		System.out.print("Synchronizing again from IDChain...");
+		long s2 = System.currentTimeMillis();
 		f = store.synchronizeAsync((c, l) -> c, TestConfig.storePass)
 				.thenRun(() -> {
-					System.out.println("OK");
+					long duration = (System.currentTimeMillis() - s2 + 500) / 1000;
+					System.out.println("OK(" + duration + "s)");
 				});
 
 		f.join();

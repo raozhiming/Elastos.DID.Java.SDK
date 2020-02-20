@@ -38,11 +38,11 @@ import java.util.List;
 import java.util.Map;
 
 import org.elastos.did.adapter.DummyAdapter;
+import org.elastos.did.crypto.HDKey;
 import org.elastos.did.exception.DIDDeactivatedException;
 import org.elastos.did.exception.DIDException;
 import org.elastos.did.exception.DIDStoreException;
 import org.elastos.did.exception.WrongPasswordException;
-import org.elastos.did.util.HDKey;
 import org.junit.jupiter.api.Test;
 
 public class DIDStoreTest {
@@ -244,6 +244,49 @@ public class DIDStoreTest {
 
     	assertTrue(resolved.isValid());
     }
+
+	@Test
+	public void testCreateDIDByIndex() throws DIDException {
+	    TestData testData = new TestData();
+	    DIDStore store = testData.setup(true);
+	    testData.initIdentity();
+
+	    String alias = "my first did";
+
+	    DID did = store.getDid(0);
+	    DIDDocument doc = store.newDid(0, alias, TestConfig.storePass);
+	    assertTrue(doc.isValid());
+	    assertEquals(did, doc.getSubject());
+
+	    Exception e = assertThrows(DIDStoreException.class, () -> {
+	        store.newDid(alias, TestConfig.storePass);
+	    });
+	    assertEquals("DID already exists.", e.getMessage());
+
+	    boolean success = store.deleteDid(did);
+	    assertTrue(success);
+	    doc = store.newDid(alias, TestConfig.storePass);
+	    assertTrue(doc.isValid());
+	    assertEquals(did, doc.getSubject());
+	}
+
+	@Test
+	public void testGetDid() throws DIDException {
+	    TestData testData = new TestData();
+	    DIDStore store = testData.setup(true);
+	    testData.initIdentity();
+
+	    for (int i = 0; i < 100; i++) {
+		    String alias = "did#" + i;
+
+		    DIDDocument doc = store.newDid(i, alias, TestConfig.storePass);
+		    assertTrue(doc.isValid());
+
+		    DID did = store.getDid(i);
+
+		    assertEquals(doc.getSubject(), did);
+	    }
+	}
 
 	@Test
 	public void testUpdateDid() throws DIDException {
@@ -1243,7 +1286,7 @@ public class DIDStoreTest {
 	}
 
 	@Test
-	public void testCompatibilityNewDID() throws DIDException {
+	public void testCompatibilityNewDIDandGetDID() throws DIDException {
 		URL url = this.getClass().getResource("/teststore");
 		File dir = new File(url.getPath());
 
@@ -1255,6 +1298,15 @@ public class DIDStoreTest {
        	assertNotNull(doc);
 
        	store.deleteDid(doc.getSubject());
+
+       	DID did = store.getDid(1000);
+
+       	doc = store.newDid(1000, TestConfig.storePass);
+       	assertNotNull(doc);
+       	assertEquals(doc.getSubject(), did);
+
+       	store.deleteDid(doc.getSubject());
+
 	}
 
 	private void createDataForPerformanceTest(DIDStore store)
@@ -1293,7 +1345,7 @@ public class DIDStoreTest {
     	else
     		store = DIDStore.open("filesystem", TestConfig.storeRoot, 0, 0, adapter);
 
-       	String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
+       	String mnemonic =  Mnemonic.getInstance().generate();
     	store.initPrivateIdentity(Mnemonic.ENGLISH, mnemonic,
     			TestConfig.passphrase, TestConfig.storePass, true);
 
@@ -1340,7 +1392,7 @@ public class DIDStoreTest {
 			Utils.deleteFile(new File(TestConfig.storeRoot + i));
 			stores[i] = DIDStore.open("filesystem", TestConfig.storeRoot + i, new DummyAdapter());
 			assertNotNull(stores[i]);
-			String mnemonic = Mnemonic.generate(Mnemonic.ENGLISH);
+			String mnemonic = Mnemonic.getInstance().generate();
 			stores[i].initPrivateIdentity(Mnemonic.ENGLISH, mnemonic, "", TestConfig.storePass);
 		}
 
@@ -1415,12 +1467,21 @@ public class DIDStoreTest {
 
 	@Test
 	public void testExportAndImportStore() throws DIDException, IOException {
-		URL url = this.getClass().getResource("/teststore");
-		File storeDir = new File(url.getPath());
+    	TestData testData = new TestData();
+    	DIDStore store = testData.setup(true);
+    	testData.initIdentity();
 
-		DummyAdapter adapter = new DummyAdapter();
-		DIDBackend.initialize(adapter, TestData.getResolverCacheDir());
-		DIDStore store = DIDStore.open("filesystem", storeDir.getAbsolutePath(), adapter);
+    	// Store test data into current store
+    	testData.loadTestIssuer();
+    	testData.loadTestDocument();
+    	VerifiableCredential vc = testData.loadProfileCredential();
+    	vc.setAlias("MyProfile");
+    	vc = testData.loadEmailCredential();
+    	vc.setAlias("Email");
+    	vc = testData.loadTwitterCredential();
+    	vc.setAlias("Twitter");
+    	vc = testData.loadPassportCredential();
+    	vc.setAlias("Passport");
 
 		File tempDir = new File(TestConfig.tempDir);
 		tempDir.mkdirs();
@@ -1430,8 +1491,10 @@ public class DIDStoreTest {
 
 		File restoreDir = new File(tempDir, "restore");
 		Utils.deleteFile(restoreDir);
-		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath(), adapter);
+		DIDStore store2 = DIDStore.open("filesystem", restoreDir.getAbsolutePath(), testData.getAdapter());
 		store2.importStore(exportFile, "password", TestConfig.storePass);
+
+		File storeDir = new File(TestConfig.storeRoot);
 
 		assertTrue(storeDir.exists());
 		assertTrue(restoreDir.exists());
